@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+checkpoints/
+spark-warehouse/
+data/
+*.log
+.DS_Store
