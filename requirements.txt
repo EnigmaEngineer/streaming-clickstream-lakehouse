@@ -1,0 +1,4 @@
+confluent-kafka==2.5.0
+pyspark==3.5.1
+python-dotenv==1.0.1
+duckdb==1.0.0
