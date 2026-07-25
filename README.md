@@ -33,7 +33,7 @@ Producer loop is next.
 
 - [x] Day 1: compose stack, event schema, decisions doc
 - [ ] Day 2: producer with rate control, late events, duplicates
-- [ ] Day 3: streaming job — parse, dedupe, watermark, session windows
+- [ ] Day 3: streaming job. parse / dedupe / watermark / sessionize
 - [ ] Day 4: feature extraction, Snowflake MERGE sink
 - [ ] Day 5: latency and throughput metrics
 - [ ] Day 6: failure testing, replay, duplicate verification

@@ -12,7 +12,7 @@ Spark needs for session windows to work without a shuffle on every micro-batch.
 |---|---|---|
 | `event_id` | uuid string | Dedupe key. Generator intentionally emits some twice. |
 | `user_id` | string | `u_` + 6 hex. Partition key. |
-| `session_hint` | string | Generator's own session id. **Not** used by the pipeline — it exists so I can score my sessionization against ground truth. |
+| `session_hint` | string | Generator's own session id. **Not** used by the pipeline. It exists so I can score my sessionization against ground truth. |
 | `event_type` | enum | `page_view`, `click`, `scroll`, `add_to_cart`, `checkout` |
 | `page` | string | Path, e.g. `/product/8821` |
 | `referrer` | string \| null | Null on the first event of a visit |

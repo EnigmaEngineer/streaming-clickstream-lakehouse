@@ -23,8 +23,8 @@ for demonstration, not for the benchmark numbers.
 ## user_id as the partition key
 
 Session windows need all of a user's events together. Partitioning by `user_id` means
-Spark can keep session state local. Risk is hot partitions if one user is very active —
-the generator has a heavy-tail user distribution specifically so I can see whether this
+Spark can keep session state local. Risk is hot partitions if one user is very active.
+The generator has a heavy-tail user distribution specifically so I can see whether that
 actually bites.
 
 ## Open questions
