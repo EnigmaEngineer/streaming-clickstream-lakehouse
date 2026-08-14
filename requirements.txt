@@ -1,4 +1,11 @@
+# The generator, the tests and scripts/measure_generator.py need NOTHING from this
+# file. They run on the standard library. That is deliberate, so a clone can produce
+# events and run the suite before installing anything.
+#
+# ot-029 on the program side is about declaring packages nobody imports. Day 1
+# declared pyspark, python-dotenv and duckdb, and not one line of code imported any
+# of them. They are gone from here. They come back on the day something imports them.
+
+# Only used by generator/sinks.py KafkaSink. That path has never been run against a
+# broker, see day 3.
 confluent-kafka==2.5.0
-pyspark==3.5.1
-python-dotenv==1.0.1
-duckdb==1.0.0
