@@ -28,7 +28,14 @@ def run() -> int:
 
     passed, failed = 0, []
     for name in MODULES:
-        mod = importlib.import_module(name)
+        # An import error is a reportable failure, not a reason to abandon the run
+        # and print a traceback where a count should be. Added 2026-08-15 after the
+        # Spark runner did exactly that.
+        try:
+            mod = importlib.import_module(name)
+        except Exception:
+            failed.append((name, traceback.format_exc()))
+            continue
         checks = [f for f in dir(mod) if f.startswith("check_")]
         if not checks:
             failed.append((name, "module defines no checks"))
