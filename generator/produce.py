@@ -203,6 +203,12 @@ def main(argv=None) -> int:
     p.add_argument("--users", type=int, default=5000)
     p.add_argument("--alpha", type=float, default=1.0)
     p.add_argument("--late-rate", type=float, default=0.05)
+    # Day 3 needs to push the lateness tail past the thirty minute session gap. Below
+    # the gap, an online rule that tracks the newest event time and an offline session
+    # window agree exactly, because no late event can ever bridge a gap it is shorter
+    # than. Above it they must diverge, and that is a claim worth being able to run.
+    p.add_argument("--late-median-s", type=float, default=12.0)
+    p.add_argument("--late-sigma", type=float, default=1.4)
     p.add_argument("--dup-rate", type=float, default=0.01)
     p.add_argument("--partitions", type=int, default=6)
     p.add_argument("--pool", type=int, default=150, help="concurrent visits")
@@ -220,6 +226,8 @@ def main(argv=None) -> int:
         users=a.users,
         alpha=a.alpha,
         late_rate=a.late_rate,
+        late_median_s=a.late_median_s,
+        late_sigma=a.late_sigma,
         dup_rate=a.dup_rate,
         partitions=a.partitions,
         pool=a.pool,
