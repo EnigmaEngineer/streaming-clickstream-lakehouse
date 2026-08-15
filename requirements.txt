@@ -1,11 +1,22 @@
-# The generator, the tests and scripts/measure_generator.py need NOTHING from this
-# file. They run on the standard library. That is deliberate, so a clone can produce
-# events and run the suite before installing anything.
+# Checked with ast over every .py file in the repo on 2026-08-15. Exactly two third
+# party imports exist. Anything not listed here is the standard library.
 #
 # ot-029 on the program side is about declaring packages nobody imports. Day 1
-# declared pyspark, python-dotenv and duckdb, and not one line of code imported any
-# of them. They are gone from here. They come back on the day something imports them.
+# declared pyspark, python-dotenv and duckdb with not one line importing any of
+# them. pyspark is back because stream/ imports it now. The other two are not.
 
-# Only used by generator/sinks.py KafkaSink. That path has never been run against a
-# broker, see day 3.
+# generator/ and tests/run_all.py need NOTHING from this file. They run on the
+# standard library, so a clone can produce events and run 47 checks before
+# installing anything. tests/run_spark.py is the suite that needs the install.
+
+# stream/, scripts/score_sessions.py and tests/run_spark.py.
+# 3.5 or newer is a hard floor, not a preference. dropDuplicatesWithinWatermark
+# landed in 3.5.0 and stream/sessionize.py has no fallback for its absence.
+# 4.x is NOT declared because it wants Java 17 and the day 3 numbers were measured
+# on Java 11. Pinning a version the figures never ran on is worse than a range.
+pyspark>=3.5,<4.0
+
+# Only used by generator/sinks.py KafkaSink. That path has STILL never been run
+# against a broker. Day 3 sessionized from a file source instead, so the claim that
+# this works remains unmade. See the README.
 confluent-kafka==2.5.0
