@@ -41,13 +41,13 @@ def iso(offset_s: float) -> str:
     return t.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def record(event_id, user_id, at_s, hint="s_x_001", late_s=0.0):
+def record(event_id, user_id, at_s, hint="s_x_001", late_s=0.0, page="/", event_type="page_view"):
     return {
         "event_id": event_id,
         "user_id": user_id,
         "session_hint": hint,
-        "event_type": "page_view",
-        "page": "/",
+        "event_type": event_type,
+        "page": page,
         "referrer": None,
         "device": "mobile",
         "country": "US",
@@ -108,6 +108,17 @@ def stream_sessions(rows, name, gap="30 minutes", delay="2 minutes"):
     df = spark().read.parquet(str(out)).where(F.col("user_id") != FLUSH_USER).collect()
     shutil.rmtree(src, ignore_errors=True)
     return df
+
+
+def feat(rows):
+    """Sessions with features, over a batch source.
+
+    build_sessions cannot be used here. dropDuplicatesWithinWatermark is refused on a
+    batch DataFrame, and the dedupe is not what these checks are about. The one check
+    that proves the features survive the real streaming path is
+    check_features_survive_the_streaming_path below.
+    """
+    return session_windows(watermark(parse(as_raw(rows))), "30 minutes")
 
 
 def check_parse_types_the_two_timestamps():
@@ -224,9 +235,28 @@ def check_build_sessions_is_the_same_as_the_steps_in_order():
 
 def check_session_output_carries_no_truth_column():
     """session_hint is ground truth and the pipeline must never emit it. If it did,
-    the scorer would be grading a pipeline that had been handed the answer."""
+    the scorer would be grading a pipeline that had been handed the answer.
+
+    The assertion is on the exact set rather than on the absence of one name, and it
+    earned that on 2026-08-16. The first draft of day 4's feature list carried a
+    `distinct_hints` column, which is a count of the truth column and would have
+    walked straight past an `assert "session_hint" not in cols`. This is also why the
+    set is written out rather than derived from SESSION_COLUMNS. Deriving it would
+    make the two agree by construction and check nothing.
+    """
     cols = set(build_sessions(as_raw([record("a", "u_1", 0)])).columns)
-    assert cols == {"user_id", "session_start", "session_end", "event_count"}, cols
+    assert cols == {
+        "user_id",
+        "session_start",
+        "session_end",
+        "event_count",
+        "page_depth",
+        "duration_s",
+        "converted",
+        "bounce",
+        "window_span_s",
+    }, cols
+    assert not any("hint" in c for c in cols), cols
 
 
 def check_session_end_is_one_gap_past_the_last_event():
@@ -234,3 +264,80 @@ def check_session_end_is_one_gap_past_the_last_event():
     out = session_windows(watermark(parse(as_raw(rows))), "30 minutes").collect()[0]
     span = (out["session_end"] - out["session_start"]).total_seconds()
     assert abs(span - (120 + 1800)) < 1e-6, span
+
+
+def check_duration_is_the_event_span_and_not_the_window_span():
+    """The easiest wrong number in the project. A session window ends one gap after
+    its last event, so the window span carries the whole gap on every row."""
+    rows = [record("a", "u_1", 0), record("b", "u_1", 120)]
+    out = feat(rows).collect()[0]
+    assert abs(out["duration_s"] - 120.0) < 1e-6, out["duration_s"]
+    assert abs(out["window_span_s"] - 1920.0) < 1e-6, out["window_span_s"]
+    # And the difference is exactly the gap, which is what makes it so easy to miss.
+    assert abs((out["window_span_s"] - out["duration_s"]) - 1800.0) < 1e-6, out
+
+
+def check_page_depth_counts_distinct_pages_not_events():
+    rows = [
+        record("a", "u_1", 0, page="/"),
+        record("b", "u_1", 10, page="/"),
+        record("c", "u_1", 20, page="/p/1"),
+    ]
+    out = feat(rows).collect()[0]
+    assert out["event_count"] == 3, out
+    assert out["page_depth"] == 2, out
+
+
+def check_a_single_event_on_a_single_page_is_a_bounce():
+    out = feat([record("a", "u_1", 0, page="/")]).collect()[0]
+    assert out["bounce"] == 1, out
+
+
+def check_two_events_on_one_page_is_not_a_bounce():
+    """The control for the rule above. Without it the bounce flag could be reading
+    page_depth alone, and both halves of the rule would look enforced."""
+    rows = [record("a", "u_1", 0, page="/"), record("b", "u_1", 5, page="/")]
+    out = feat(rows).collect()[0]
+    assert out["page_depth"] == 1 and out["event_count"] == 2, out
+    assert out["bounce"] == 0, out
+
+
+def check_one_event_on_one_page_of_two_users_does_not_collapse():
+    rows = [record("a", "u_1", 0, page="/"), record("b", "u_2", 0, page="/")]
+    out = feat(rows).collect()
+    assert len(out) == 2, out
+    assert all(r["bounce"] == 1 for r in out), out
+
+
+def check_conversion_is_set_by_any_checkout_in_the_session():
+    rows = [
+        record("a", "u_1", 0, event_type="page_view"),
+        record("b", "u_1", 30, event_type="checkout"),
+        record("c", "u_1", 60, event_type="click"),
+    ]
+    out = feat(rows).collect()[0]
+    assert out["converted"] == 1, out
+
+
+def check_a_session_with_no_checkout_is_not_converted():
+    rows = [record("a", "u_1", 0, event_type="page_view"), record("b", "u_1", 30, event_type="click")]
+    out = feat(rows).collect()[0]
+    assert out["converted"] == 0, out
+
+
+def check_features_survive_the_streaming_path():
+    """The batch helper above skips the dedupe, so one check has to run the real
+    thing. A feature that only works when the dedupe is absent would otherwise ship."""
+    rows = [
+        record("a", "u_1", 0, page="/", event_type="page_view"),
+        record("a", "u_1", 0, page="/", event_type="page_view"),
+        record("b", "u_1", 90, page="/checkout", event_type="checkout"),
+    ]
+    out = stream_sessions(rows, "features")
+    assert len(out) == 1, out
+    row = out[0]
+    assert row["event_count"] == 2, row
+    assert row["page_depth"] == 2, row
+    assert row["converted"] == 1, row
+    assert abs(row["duration_s"] - 90.0) < 1e-6, row
+    assert row["bounce"] == 0, row

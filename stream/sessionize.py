@@ -10,6 +10,7 @@ know a session is finished.
 
 from pyspark.sql import DataFrame, functions as F
 
+from stream import features
 from stream.schema import EVENT_SCHEMA, cast_times
 
 # Thirty minutes of inactivity ends a session. Standard, and it is a guess at the
@@ -67,23 +68,29 @@ def dedupe(df: DataFrame) -> DataFrame:
 def session_windows(df: DataFrame, gap: str = DEFAULT_GAP) -> DataFrame:
     """Collapse events into sessions, one row per user per session.
 
-    Day 3 stops at boundaries and a count. Duration and page depth and bounce and
-    the conversion flag are day 4. Putting them here would be building tomorrow's
-    blueprint line on top of today's.
+    The aggregate list comes from stream/features.py. The grouping is the decision
+    that belongs here and what gets measured inside the group is a separate one.
 
     There is deliberately no hook here for the scorer to hang a truth column on.
     scripts/score_sessions.py joins the raw events back onto these windows instead,
     so the thing being scored is the pipeline's real output and not a variant of it
     built with an extra argument.
     """
-    return (
-        df.groupBy(F.col("user_id"), F.session_window(F.col("event_ts"), gap).alias("sw"))
-        .agg(F.count("*").alias("event_count"))
-        .select(
+    aggregated = df.groupBy(
+        F.col("user_id"), F.session_window(F.col("event_ts"), gap).alias("sw")
+    ).agg(*features.aggregations())
+    return features.derive(
+        aggregated.select(
             F.col("user_id"),
             F.col("sw.start").alias("session_start"),
             F.col("sw.end").alias("session_end"),
             F.col("event_count"),
+            F.col("page_depth"),
+            F.col("duration_s"),
+            F.col("converted"),
+            # Kept beside duration_s so the gap inflation is visible in the data
+            # rather than only in a docstring. features.aggregations explains it.
+            (F.col("sw.end").cast("double") - F.col("sw.start").cast("double")).alias("window_span_s"),
         )
     )
 
