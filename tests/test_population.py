@@ -1,6 +1,30 @@
 import random
 
-from generator.population import Population, crc32_partition, partition_load
+from generator.population import (
+    Population,
+    crc32_partition,
+    model_divergence,
+    murmur2,
+    murmur2_partition,
+    partition_disagreements,
+    partition_load,
+)
+
+# Measured against a real broker on 2026-08-16. Kafka 3.7.1 in KRaft mode with six
+# partitions and librdkafka 2.15.0. The columns are the key and the partition the
+# librdkafka producer put it on and the partition the Java console producer chose for
+# the same key. These came off the broker. Nothing in this repo computed them. Full
+# map in the day 4 audit and scripts/probe_partitioner.py regenerates them.
+MEASURED = [
+    ("u_004ae5", 2, 1),
+    ("u_03983c", 3, 2),
+    ("u_0870e1", 3, 4),
+    ("u_09e469", 3, 1),
+    ("u_0a5d2f", 0, 2),
+    ("u_0ff18e", 5, 4),
+    ("u_101fbc", 4, 2),
+    ("u_11af92", 5, 1),
+]
 
 
 def check_alpha_zero_is_uniform():
@@ -71,3 +95,85 @@ def check_partition_load_conserves_events():
     load = partition_load(counts, 6)
     assert sum(load) == sum(counts.values()), (sum(load), sum(counts.values()))
     assert len(load) == 6
+
+
+def check_both_models_reproduce_what_the_broker_did():
+    """The whole point of the day 4 probe, frozen so it cannot quietly rot.
+
+    Both halves matter. crc32 has to match the librdkafka column and murmur2 has to
+    match the Java column. Checking only the model this repo uses would leave the
+    claim about the other client resting on nothing again.
+    """
+    for key, via_librdkafka, via_java in MEASURED:
+        assert crc32_partition(key, 6) == via_librdkafka, (key, crc32_partition(key, 6), via_librdkafka)
+        assert murmur2_partition(key, 6) == via_java, (key, murmur2_partition(key, 6), via_java)
+
+
+def check_the_two_models_really_do_disagree_on_these_keys():
+    """Without this the check above passes if the two functions are the same function.
+
+    Every measured pair here has the two clients on different partitions, so a
+    murmur2_partition that had accidentally been written as crc32 would fail. That is
+    the control, and this program has been bitten enough times by a green check that
+    could not have gone red.
+    """
+    for key, via_librdkafka, via_java in MEASURED:
+        assert via_librdkafka != via_java, key
+
+
+def check_disagreements_are_counted_not_rated():
+    """One wrong key out of six is still wrong. `agrees` is not a threshold.
+
+    Six keys and not two. A two key fixture cannot tell "zero disagreements" apart
+    from "fewer than half disagree", because one out of two fails both readings. A
+    mutant that turned the flag into a majority vote survived that fixture on
+    2026-08-16 and this is what killed it.
+    """
+    observed = {k: i % 6 for i, k in enumerate("abcdef")}
+    perfect = partition_disagreements(observed, 6, lambda k, p: observed[k])
+    assert perfect["disagreed"] == 0 and perfect["agrees"] is True
+    one_off = partition_disagreements(observed, 6, lambda k, p: observed[k] + (k == "b"))
+    assert one_off["disagreed"] == 1, one_off
+    assert one_off["agrees"] is False, "a single disagreement is a disagreement"
+    assert one_off["examples"][0]["key"] == "b"
+
+
+def check_a_comparison_over_nothing_is_refused():
+    """A checker that passes on zero inputs is the defect this program has now found
+    in three of its own tools. This one raises instead."""
+    for bad in ({}, None):
+        try:
+            partition_disagreements(bad or {}, 6)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad!r}")
+
+
+def check_divergence_rate_sits_near_the_independence_line():
+    keys = Population(200, alpha=1.0, seed=0).user_ids
+    d = model_divergence(keys, 6)
+    assert d["keys"] == 200
+    # Two unrelated hashes over six partitions collide about one time in six, so the
+    # rate should sit near 0.833. A rate near 0 would mean the two models are the same
+    # function and a rate of 1.0 would mean something is forcing them apart.
+    assert 0.7 < d["rate"] < 0.95, d
+    assert d["chance_rate_if_independent"] == round(5 / 6, 4)
+
+
+def check_murmur2_masks_the_sign_bit_rather_than_taking_an_absolute_value():
+    """Java's toPositive is `& 0x7fffffff`. Writing it as abs() looks equivalent and is
+    not, and it only diverges on keys whose hash has the top bit set.
+
+    The assertion is that at least one real user id in a 400 user population is such a
+    key. A check that merely looped over keys asserting the masked answer equals the
+    masked answer would pass against the abs() version too.
+    """
+    hot = [k for k in Population(400, alpha=1.0, seed=3).user_ids if murmur2(k.encode("utf-8")) >= 0x80000000]
+    assert hot, "no key in the sample had the top bit set, so this check proved nothing"
+    diverged = 0
+    for key in hot:
+        h = murmur2(key.encode("utf-8"))
+        assert murmur2_partition(key, 6) == (h & 0x7FFFFFFF) % 6
+        if abs(h - 0x100000000) % 6 != murmur2_partition(key, 6):
+            diverged += 1
+    assert diverged, f"abs() agreed with the mask on all {len(hot)} negative hashes, so this proved nothing"
