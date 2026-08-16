@@ -16,7 +16,7 @@ from pyspark.sql import functions as F
 
 from scripts.flush_shard import SENTINEL_USER
 from stream.job import spark_session
-from stream.scoring import score
+from stream.scoring import feature_bias, score
 
 
 def main(argv=None) -> int:
@@ -24,6 +24,7 @@ def main(argv=None) -> int:
     p.add_argument("--events", required=True, help="directory of JSONL shards")
     p.add_argument("--sessions", required=True, help="parquet written by stream.job")
     p.add_argument("--keep-sentinel", action="store_true")
+    p.add_argument("--features", action="store_true", help="also print the feature bias table")
     a = p.parse_args(argv)
 
     spark = spark_session(app="score-sessions")
@@ -35,7 +36,10 @@ def main(argv=None) -> int:
         events = events.where(F.col("user_id") != SENTINEL_USER)
         sessions = sessions.where(F.col("user_id") != SENTINEL_USER)
 
-    print(json.dumps(score(events, sessions), indent=2), file=sys.stdout)
+    out = {"scorecard": score(events, sessions)}
+    if a.features:
+        out["feature_bias"] = feature_bias(events, sessions)
+    print(json.dumps(out, indent=2), file=sys.stdout)
     spark.stop()
     return 0
 

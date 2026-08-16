@@ -7,14 +7,16 @@ duplicates, and reruns.
 ```bash
 ./scripts/setup.sh                                        # kafka + minio up, topic created
 python -m generator.produce --rate 200 --seconds 5 --report
-python -m tests.run_all                                   # 47 checks, no install needed
-python -m tests.run_spark                                 # 22 checks, needs pyspark
+python -m tests.run_all                                   # 63 checks, no install needed
+python -m tests.run_warehouse                             # 9 checks, needs duckdb
+python -m tests.run_spark                                 # 33 checks, needs pyspark
 python scripts/measure_generator.py                       # every generator number below
 ```
 
 The generator and `tests/run_all.py` need nothing installed. Standard library only.
-`stream/` and `tests/run_spark.py` need pyspark 3.5 or newer. Both suites are real
-and both have to pass. Neither skips when its dependency is missing.
+`stream/` needs pyspark 3.5 or newer and `warehouse/` needs duckdb. Three suites, each
+named for the install it needs. All three are real and all three have to pass. None of
+them skips when its dependency is missing.
 
 ## Architecture
 
@@ -30,10 +32,14 @@ and both have to pass. Neither skips when its dependency is missing.
                                          (offsets + session state)
 ```
 
-Key is `user_id` so all of a user's events land on one partition. Session windows need
-that to keep state local. That guarantee holds within one client library and not
-across two. librdkafka hashes a key with CRC32 and the Java producer uses murmur2, so
-the same key lands on a different partition depending on who wrote it.
+Key is `user_id` so all of a user's events land on one partition. **The reason written
+here until day 4 was that session windows need that to keep state local, and that is
+wrong.** Spark reshuffles by the grouping key on its own. The physical plan for
+`session_windows` carries `Exchange hashpartitioning(user_id, 8)`, so whatever the
+broker did with the key is undone before the aggregation ever sees it. Keying still
+buys per-user ordering at the broker and it buys nothing at all for Spark state.
+
+The second half of that sentence was right and is now measured. See below.
 
 ## The generator
 
@@ -56,7 +62,15 @@ the same key lands on a different partition depending on who wrote it.
 | `schema.py` | The declared wire schema and the one place a timestamp is built. |
 | `sessionize.py` | parse, watermark, dedupe, session windows, and the door they compose into. |
 | `job.py` | Source, sink, and the query progress numbers pulled off the running query. |
+| `features.py` | The four per-session features and why duration is not the window span. |
 | `scoring.py` | The comparison against `session_hint`. Nothing in the pipeline imports it. |
+
+`warehouse/` lands them.
+
+| Module | What it owns |
+|---|---|
+| `sql.py` | Every statement in both dialects, and which of them have ever run. |
+| `merge.py` | Stage, merge, clear. The only function that writes to `sessions`. |
 
 ## Measured on 2026-08-14
 
@@ -150,8 +164,11 @@ mkdir -p /tmp/events && (cd /tmp/events && split -n l/12 -d --additional-suffix=
 python -m scripts.flush_shard --dir /tmp/events --hours 6
 python -m stream.job --source file --path /tmp/events --out /tmp/sessions \
     --checkpoint /tmp/ckpt --available-now --files-per-trigger 1 --progress
-python -m scripts.score_sessions --events /tmp/events --sessions /tmp/sessions
+python -m scripts.score_sessions --events /tmp/events --sessions /tmp/sessions --features
+python -m stream.job --source file --path /tmp/events --sink duckdb --duckdb /tmp/wh.duckdb \
+    --checkpoint /tmp/ckpt2 --available-now --files-per-trigger 1 --progress
 python -m tests.run_spark
+python -m tests.run_warehouse
 ```
 
 `build_sessions` in `stream/sessionize.py` is the only route from a payload to a
@@ -212,6 +229,14 @@ The practical version. On a session windowed pipeline the watermark is buying ou
 latency and state size, not late data. The gap is doing the admission. Tuning the
 watermark to protect against data loss is tuning the wrong number.
 
+**That claim is about the session window operator and day 4 found a hole beside it.**
+The dedupe operator is reported as its own column above for exactly this reason. On
+day 3 it refused 0 rows at a 2 minute watermark against an independent Python count
+of 25 sitting below it. On day 4, on a different corpus, it refused 98 against an
+independent count of 124. The session window operator dropped 0 on both days, so the
+finding above is untouched. Turning 0 of 25 into 98 of 124 needs a mechanism and I do
+not have one. It is being chased rather than smoothed over.
+
 ### Scoring against ground truth
 
 `session_hint` is the real boundary and the pipeline never reads it.
@@ -240,26 +265,148 @@ outright.
 Spark returning 3,770 on rows one and three is a coincidence of the shared seed
 rather than a pattern. Row two, on a different seed, returns 3,723.
 
+## The partitioner, finally measured against a broker
+
+`generator/population.py` has claimed since day 1 that `crc32_partition` reproduces
+librdkafka's default partitioner. Nothing had checked it. Day 4 stood a real broker
+up and checked it, and checked the Java claim beside it.
+
+Kafka 3.7.1 in KRaft mode on one node with six partitions. librdkafka 2.15.0. The
+keys are 200 distinct user ids from `generator.population.Population` and the same
+200 go through both clients into two topics. Measured 2026-08-16 by
+`scripts/probe_partitioner.py`.
+
+| producer | model | keys | disagreements |
+|---|---|---|---|
+| librdkafka | `crc32_partition` | 200 | 0 |
+| librdkafka | `murmur2_partition` | 200 | 169 |
+| Java console producer | `murmur2_partition` | 200 | 0 |
+| Java console producer | `crc32_partition` | 200 | 169 |
+
+Both models are exact for their own client and wrong for the other on 169 of 200
+keys. That is 84.5 percent against the 83.3 percent two unrelated hashes would
+disagree by chance over six partitions, so the two hashes carry no shared structure
+worth naming.
+
+The consequence is narrow and it is real. Two producers written in different
+languages, pointed at the same topic with the same key, do not co-locate a user.
+Anything downstream that assumes per-key locality across both is assuming something
+the broker never promised. For this project the answer turned out to be that Spark
+did not need the locality anyway, which is the correction at the top of this file.
+
+The Java side is driven by `kafka-console-producer.sh` rather than by a Java
+partitioner written here. A port measured against another port measures nothing.
+
+## Session features
+
+Day 4's four features, computed inside the session window in `stream/features.py`.
+
+**`duration_s` is the span of real events, not the span of the window.** A session
+window ends one gap after its last event, so `session_end - session_start` carries
+the entire gap on every row. Measured over the 2,366 recovered sessions of the
+2026-08-16 corpus, median `duration_s` is 10.1 s against a median `window_span_s` of
+1,810.1 s. That is a factor of 133.7 at the median. The mean difference is exactly
+1,800.0 s, which is the gap. Both columns ship so the inflation is visible in the
+data rather than only in a comment.
+
+**`page_depth` is a `collect_set` and not a `countDistinct`.** Spark refuses a
+distinct aggregate on a streaming DataFrame outright with "Distinct aggregations are
+not supported on streaming DataFrames/Datasets", and its error suggests
+`approx_count_distinct`. That suggestion is wrong here. Page depth runs from 1 to
+about 100 in this corpus and an exact answer is available, so a sketch would be an
+estimate bought for nothing. The cost of `collect_set` is one set of page strings held
+per open session.
+
+### What the boundary miss rate does to the features
+
+Day 3 measured the thirty minute gap losing boundaries and left it as a number about
+sessionization. This is the same number seen from the dashboard end. Measured
+2026-08-16 over 58,157 events. 6,664 true sessions against 2,366 recovered, so the
+boundary miss rate is 0.645.
+
+| feature | per true visit | per recovered session | ratio |
+|---|---|---|---|
+| conversion rate | 0.3262 | 0.4463 | 1.368 |
+| bounce rate | 0.1172 | 0.0845 | 0.721 |
+| events per session | 8.64 | 24.30 | 2.812 |
+| pages per session | 4.95 | 9.74 | 1.968 |
+| duration, seconds | 16.51 | 67.06 | 4.061 |
+
+Every feature is computed correctly and every one is wrong, because a merged session
+inherits the union of two visits. A checkout anywhere in the pair marks the whole
+thing, so conversion goes up. A bounce in either half stops being a bounce, so bounce
+goes down. The levels here are properties of `generator/session.py` and only the
+ratios say anything about the pipeline.
+
+`stream/scoring.py` computes both sides and `tests/test_scoring.py` checks it against
+a two visit fixture whose answer is known by hand.
+
+## The warehouse sink
+
+Stage, merge, clear. A batch lands in `sessions_stage`. One MERGE moves it into
+`sessions` keyed on `(user_id, session_start)` and then the stage is emptied. That is the
+shape a Snowflake load takes with a staged file in front of it, so the DuckDB path is
+a rehearsal of the real one rather than a different design.
+
+**Snowflake has never been contacted.** `warehouse/sql.py` holds every statement in
+both dialects and says which have run. DuckDB 1.5.5, all of them, on 2026-08-16.
+Snowflake, none, ever.
+
+Idempotency is a claim, so it is measured. The job ran the whole corpus into a fresh
+database, then ran it again from a fresh checkpoint into the same database.
+
+```
+run 1  batch_rows 2366  rows_before 0     rows_after 2366  inserted 2366  updated 0
+run 2  batch_rows 2366  rows_before 2366  rows_after 2366  inserted 0     updated 2366
+fingerprint before replay  2366:4e4929dbea89f6ce98368a25d9eff67d
+fingerprint after  replay  2366:4e4929dbea89f6ce98368a25d9eff67d
+```
+
+The fingerprint is an md5 over every column except `loaded_at`, ordered by the merge
+key, so a merge that dropped one row and inserted another would not survive it. A row
+count on its own would.
+
+**Matched rows are updated, not skipped.** `DO NOTHING` would look idempotent and
+would pin the first version of a session forever, including a truncated one written
+before a replay finished it.
+
+**A batch holding two rows for one key is refused before the MERGE is sent.**
+DuckDB refuses it too, which `tests/test_merge.py` checks rather than assumes, so the
+guard is a better error message and not the only thing standing between a replay and
+an arbitrary winner. No batch in the 2026-08-16 run contained one.
+
 ## Status
 
-Day 3 of 7.
+Day 4 of 7.
 
 - [x] Day 1: compose stack, event schema, decisions doc
 - [x] Day 2: producer with rate control. Late events, duplicates and a visit model
 - [x] Day 3: streaming job. parse / dedupe / watermark / sessionize
-- [ ] Day 4: feature extraction, Snowflake MERGE sink
+- [x] Day 4: feature extraction, staged MERGE sink, partitioner probe
 - [ ] Day 5: latency and throughput metrics
 - [ ] Day 6: failure testing, replay, duplicate verification
 - [ ] Day 7: benchmarks and writeup
 
 ## Limitations, today
 
-- **No broker has been involved at any point.** The producer's Kafka sink raises
-  rather than pretending, and the job's Kafka source is written and unrun. Day 3
-  sessionized from a file source, which exercises the same watermark and dedupe and
-  session window code and proves nothing about offsets or partition assignment.
-  `crc32_partition` still computes librdkafka's partitioner in Python with nothing
-  to check it against.
+- **A broker has now produced and consumed, and no data has flowed through it into
+  Spark.** Day 4 stood Kafka 3.7.1 up and settled the partitioner question, so
+  `crc32_partition` is measured rather than asserted. `generator/sinks.py` KafkaSink
+  and `stream/job.py --source kafka` are both still unrun. The end to end path is
+  file source to Spark to DuckDB, which proves the watermark and dedupe and session
+  and merge code and proves nothing about offsets, consumer groups or replay from a
+  broker.
+- **The warehouse is DuckDB and the Snowflake statements have never run.** They are
+  written beside the ones that did and labelled, in `warehouse/sql.py`. Snowflake also
+  accepts a PRIMARY KEY declaration without enforcing it, so on that side the
+  uniqueness of `sessions` rests entirely on the MERGE.
+- **The sink collects each micro batch to the driver.** One DuckDB file cannot be
+  written by several executors. At session volume that is fine and it is not how the
+  Snowflake version would work.
+- **`page_depth` and `duration_s` are honest measurements of dishonest sessions.**
+  The features are computed correctly and the boundary miss rate of 0.645 makes every
+  one of them wrong at the levels shown above. Fixing that is a sessionization
+  problem, not a feature problem.
 - **A bounded run leaves sessions in state.** Append mode emits a window once the
   watermark passes its end, and a run that stops reading files never advances the
   watermark again. The first full run emitted 2,117 sessions and left 34,481 events

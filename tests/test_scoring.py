@@ -8,7 +8,7 @@ way and a defect they both carry would pass.
 
 from datetime import datetime, timedelta, timezone
 
-from stream.scoring import attach_sessions, score
+from stream.scoring import attach_sessions, feature_bias, score, truth_features
 
 from tests.test_sessionize import spark
 
@@ -120,3 +120,82 @@ def check_a_window_boundary_is_start_inclusive_and_end_exclusive():
     # come back from Spark the same way, so this cannot fail on a timezone
     # representation difference the way the first version of this check did.
     assert row["session_start"] == row["event_ts"], got.collect()
+
+
+def rich_events(rows):
+    """Events carrying the columns the feature side needs.
+
+    Each row holds an event id and a user id. Then an offset in seconds and a hint
+    and a page and an event type.
+    """
+    return spark().createDataFrame(
+        [(e, u, at(s), h, p, t) for e, u, s, h, p, t in rows],
+        "event_id string, user_id string, event_ts timestamp, session_hint string, "
+        "page string, event_type string",
+    )
+
+
+def feature_sessions(rows):
+    """Recovered sessions carrying the day 4 feature columns.
+
+    Each row holds a user id and a start and an end. Then event_count and page_depth
+    and duration_s and converted and bounce.
+    """
+    return spark().createDataFrame(
+        [(u, at(a), at(b), n, d, dur, c, bo) for u, a, b, n, d, dur, c, bo in rows],
+        "user_id string, session_start timestamp, session_end timestamp, event_count int, "
+        "page_depth int, duration_s double, converted int, bounce int",
+    )
+
+
+def check_truth_features_ignore_planted_duplicates():
+    """The corpus carries repeat event_ids. Counting them on the truth side would
+    inflate the real event count and shrink the very gap feature_bias measures."""
+    e = rich_events(
+        [
+            ("a", "u_1", 0, "h1", "/", "page_view"),
+            ("a", "u_1", 0, "h1", "/", "page_view"),
+            ("b", "u_1", 10, "h1", "/cart", "add_to_cart"),
+        ]
+    )
+    got = {r["session_hint"]: r for r in truth_features(e).collect()}
+    assert got["h1"]["event_count"] == 2, got["h1"]
+    assert got["h1"]["page_depth"] == 2, got["h1"]
+
+
+def check_a_merged_session_pulls_conversion_up_and_bounce_down():
+    """The day 4 finding, on a fixture where the right answer is known by hand.
+
+    Two real visits. One is a single page bounce that never converts. The other
+    converts. Merged into one recovered session they read as one converting,
+    non-bouncing session, so conversion goes from a half to one and bounce from a
+    half to zero.
+    """
+    e = rich_events(
+        [
+            ("a", "u_1", 0, "h1", "/", "page_view"),
+            ("b", "u_1", 60, "h2", "/p/1", "page_view"),
+            ("c", "u_1", 70, "h2", "/checkout", "checkout"),
+        ]
+    )
+    s = feature_sessions([("u_1", 0, 1800, 3, 3, 70.0, 1, 0)])
+    out = feature_bias(e, s)
+    assert out["true_sessions"] == 2 and out["recovered_sessions"] == 1, out
+    assert out["converted"]["truth"] == 0.5 and out["converted"]["recovered"] == 1.0, out["converted"]
+    assert out["converted"]["ratio"] == 2.0, out["converted"]
+    assert out["bounce"]["truth"] == 0.5 and out["bounce"]["recovered"] == 0.0, out["bounce"]
+
+
+def check_an_unmerged_corpus_shows_no_bias():
+    """The control. Without it the bias table could be reporting a distortion that
+    every input produces, including a perfect one."""
+    e = rich_events(
+        [
+            ("a", "u_1", 0, "h1", "/", "page_view"),
+            ("b", "u_1", 10, "h1", "/p/1", "page_view"),
+        ]
+    )
+    s = feature_sessions([("u_1", 0, 1800, 2, 2, 10.0, 0, 0)])
+    out = feature_bias(e, s)
+    for col in ("converted", "bounce", "event_count", "page_depth", "duration_s"):
+        assert out[col]["ratio"] in (1.0, None), (col, out[col])

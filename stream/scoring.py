@@ -94,3 +94,55 @@ def score(events: DataFrame, sessions: DataFrame) -> dict:
         "split_true_sessions": split_hints,
         "split_rate": round(split_hints / hints_scored, 4) if hints_scored else 0.0,
     }
+
+
+def truth_features(events: DataFrame) -> DataFrame:
+    """The same four features, computed per real visit instead of per recovered one.
+
+    Deduplicated on `event_id` first. The corpus carries planted duplicates and a
+    truth side that counted them would report a higher event count than really
+    happened, which would flatter the pipeline by shrinking the gap this function
+    exists to measure.
+    """
+    deduped = events.dropDuplicates(["event_id"])
+    agg = deduped.groupBy("session_hint").agg(
+        F.count("*").alias("event_count"),
+        F.size(F.collect_set("page")).alias("page_depth"),
+        (F.max("event_ts").cast("double") - F.min("event_ts").cast("double")).alias("duration_s"),
+        F.max(F.when(F.col("event_type") == "checkout", 1).otherwise(0)).alias("converted"),
+    )
+    return agg.withColumn(
+        "bounce", F.when((F.col("page_depth") == 1) & (F.col("event_count") == 1), 1).otherwise(0)
+    )
+
+
+FEATURES = ["converted", "bounce", "event_count", "page_depth", "duration_s"]
+
+
+def feature_bias(events: DataFrame, sessions: DataFrame) -> dict:
+    """How far the recovered features sit from the real ones.
+
+    Day 3 measured the boundary miss rate and left it as a number about
+    sessionization. This is what that number does to the columns anyone would
+    actually put on a dashboard. A merged session inherits the union of two visits,
+    so a conversion anywhere in the pair marks the whole thing and a bounce in either
+    half stops being a bounce.
+
+    Reported as truth, recovered and the ratio. The ratio is the number worth
+    quoting, since the levels are properties of generator/session.py and the
+    distortion is a property of the thirty minute rule.
+    """
+    truth = truth_features(events)
+    out: dict = {}
+    t = truth.agg(*[F.avg(c).alias(c) for c in FEATURES]).first()
+    r = sessions.agg(*[F.avg(c).alias(c) for c in FEATURES]).first()
+    for c in FEATURES:
+        tv, rv = float(t[c]), float(r[c])
+        out[c] = {
+            "truth": round(tv, 4),
+            "recovered": round(rv, 4),
+            "ratio": round(rv / tv, 3) if tv else None,
+        }
+    out["true_sessions"] = truth.count()
+    out["recovered_sessions"] = sessions.count()
+    return out
