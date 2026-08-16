@@ -16,7 +16,13 @@
 # on Java 11. Pinning a version the figures never ran on is worse than a range.
 pyspark>=3.5,<4.0
 
-# Only used by generator/sinks.py KafkaSink. That path has STILL never been run
-# against a broker. Day 3 sessionized from a file source instead, so the claim that
-# this works remains unmade. See the README.
-confluent-kafka==2.5.0
+# warehouse/ and the --sink duckdb path in stream/job.py, plus tests/run_warehouse.py.
+# Pinned rather than ranged because MERGE INTO is recent in duckdb and the day 4
+# idempotency figures were measured on this exact version.
+duckdb==1.5.5
+
+# generator/sinks.py KafkaSink and scripts/probe_partitioner.py. The probe DID run
+# against a real broker on 2026-08-16 and the version below is the one it ran on.
+# KafkaSink itself is still unrun, so this file no longer says the whole path is
+# untested. Half of it is.
+confluent-kafka==2.15.0

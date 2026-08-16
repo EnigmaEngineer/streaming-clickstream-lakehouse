@@ -91,6 +91,42 @@ def progress_summary(query) -> dict:
     return {"batches": len(batches), "input_rows": rows_in, "state_operators": ops}
 
 
+def duckdb_sink(db_path: str, batches: list):
+    """A foreachBatch function that merges each micro batch into DuckDB.
+
+    Two things about this are honest limitations rather than design.
+
+    It runs on the driver and collects the batch there, because a DuckDB file cannot
+    be written by several executors at once. At session-row volume that is fine and at
+    real volume it is not. The Snowflake shape this rehearses writes staged Parquet
+    from the executors and merges from the stage, which is why warehouse/sql.py has a
+    stage table in it rather than a plain INSERT.
+
+    It reopens the connection per batch. Structured Streaming can re-execute a batch
+    after a failure, and a connection held open across that is a connection holding a
+    half applied transaction. Reopening costs a few milliseconds and removes the
+    question. Exactly once here comes from the MERGE being idempotent on the session
+    key, not from the sink being clever.
+    """
+    import duckdb  # noqa: PLC0415
+
+    from warehouse.merge import apply_batch, ensure_tables  # noqa: PLC0415
+    from warehouse.sql import SESSION_COLUMNS  # noqa: PLC0415
+
+    def sink(df, epoch_id: int) -> None:
+        rows = [tuple(r[c] for c in SESSION_COLUMNS) for r in df.select(*SESSION_COLUMNS).collect()]
+        con = duckdb.connect(db_path)
+        try:
+            ensure_tables(con)
+            out = apply_batch(con, rows)
+        finally:
+            con.close()
+        out["epoch"] = epoch_id
+        batches.append(out)
+
+    return sink
+
+
 def run(args) -> dict:
     spark = spark_session(shuffle_partitions=args.shuffle_partitions)
     spark.sparkContext.setLogLevel(args.log_level)
@@ -102,12 +138,12 @@ def run(args) -> dict:
 
     sessions = build_sessions(raw, gap=args.gap, delay=args.watermark)
 
-    writer = (
-        sessions.writeStream.outputMode("append")
-        .format("parquet")
-        .option("path", args.out)
-        .option("checkpointLocation", args.checkpoint)
-    )
+    merged: list = []
+    writer = sessions.writeStream.outputMode("append").option("checkpointLocation", args.checkpoint)
+    if args.sink == "duckdb":
+        writer = writer.foreachBatch(duckdb_sink(args.duckdb, merged))
+    else:
+        writer = writer.format("parquet").option("path", args.out)
     query = writer.trigger(availableNow=True).start() if args.available_now else writer.start()
 
     if args.available_now:
@@ -119,6 +155,10 @@ def run(args) -> dict:
     summary = progress_summary(query)
     summary["gap"] = args.gap
     summary["watermark"] = args.watermark
+    summary["sink"] = args.sink
+    if args.sink == "duckdb":
+        summary["merge_batches"] = merged
+        summary["rows_landed"] = merged[-1]["rows_after"] if merged else 0
     spark.stop()
     return summary
 
@@ -129,8 +169,10 @@ def main(argv=None) -> int:
     p.add_argument("--path", help="directory of JSONL shards, for --source file")
     p.add_argument("--brokers", default="127.0.0.1:9092")
     p.add_argument("--topic", default="clickstream.events")
-    p.add_argument("--out", required=True)
+    p.add_argument("--out", help="parquet output directory, for --sink parquet")
     p.add_argument("--checkpoint", required=True)
+    p.add_argument("--sink", default="parquet", choices=["parquet", "duckdb"])
+    p.add_argument("--duckdb", help="duckdb file, for --sink duckdb")
     p.add_argument("--gap", default=DEFAULT_GAP)
     p.add_argument("--watermark", default=DEFAULT_WATERMARK)
     p.add_argument("--files-per-trigger", type=int, default=0)
@@ -143,6 +185,10 @@ def main(argv=None) -> int:
 
     if a.source == "file" and not a.path:
         p.error("--path is required with --source file")
+    if a.sink == "parquet" and not a.out:
+        p.error("--out is required with --sink parquet")
+    if a.sink == "duckdb" and not a.duckdb:
+        p.error("--duckdb is required with --sink duckdb")
 
     summary = run(a)
     if a.progress:
