@@ -18,7 +18,27 @@ MODULES = [
     "tests.test_arrivals",
     "tests.test_session",
     "tests.test_produce",
+    "tests.test_warehouse",
 ]
+
+
+def collect(mod) -> list[str]:
+    """Check functions defined in this module, not ones it imported.
+
+    Found on 2026-08-16 the moment warehouse/merge.py grew a function called
+    `check_batch`. The runner picked it up off the import, called it with no
+    arguments, and reported a failure in a test file that did not have one. The
+    reverse case is worse and was sitting right behind it. An imported check that
+    happens to take no arguments would have run twice and passed twice.
+    """
+    out = []
+    for name in dir(mod):
+        if not name.startswith("check_"):
+            continue
+        fn = getattr(mod, name)
+        if callable(fn) and getattr(fn, "__module__", None) == mod.__name__:
+            out.append(name)
+    return sorted(out)
 
 
 def run() -> int:
@@ -36,7 +56,7 @@ def run() -> int:
         except Exception:
             failed.append((name, traceback.format_exc()))
             continue
-        checks = [f for f in dir(mod) if f.startswith("check_")]
+        checks = collect(mod)
         if not checks:
             failed.append((name, "module defines no checks"))
             continue
