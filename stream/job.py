@@ -153,6 +153,11 @@ def run(args) -> dict:
         query.stop()
 
     summary = progress_summary(query)
+    # The raw per batch progress, kept beside the summary rather than instead of it.
+    # stream/lag.py reads the durationMs blocks and progress_summary throws them away,
+    # and a second query run to recover them would be a second measurement of a
+    # different run.
+    summary["raw_progress"] = [dict(b) for b in query.recentProgress]
     summary["gap"] = args.gap
     summary["watermark"] = args.watermark
     summary["sink"] = args.sink
@@ -181,6 +186,7 @@ def main(argv=None) -> int:
     p.add_argument("--seconds", type=float, default=60.0, help="run length when not --available-now")
     p.add_argument("--log-level", default="ERROR")
     p.add_argument("--progress", action="store_true", help="print the query progress summary")
+    p.add_argument("--progress-json", help="write the raw per batch progress here, for scripts.latency_report")
     a = p.parse_args(argv)
 
     if a.source == "file" and not a.path:
@@ -191,8 +197,13 @@ def main(argv=None) -> int:
         p.error("--duckdb is required with --sink duckdb")
 
     summary = run(a)
+    if a.progress_json:
+        with open(a.progress_json, "w", encoding="utf-8") as fh:
+            json.dump(summary["raw_progress"], fh)
     if a.progress:
-        print(json.dumps(summary, indent=2), file=sys.stderr)
+        # raw_progress is 14 batches of nested timing dicts. Printing it here would
+        # bury the summary it sits beside, so it goes to a file or nowhere.
+        print(json.dumps({k: v for k, v in summary.items() if k != "raw_progress"}, indent=2), file=sys.stderr)
     return 0
 
 
