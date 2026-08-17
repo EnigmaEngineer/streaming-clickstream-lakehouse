@@ -46,6 +46,12 @@ def one(path: str, work: Path, watermark: str, gap: str, files_per_trigger: int)
         topic=None,
         out=str(out),
         checkpoint=str(ckpt),
+        # sink and duckdb arrived on day 4 and this namespace did not get them, so
+        # every run of this script since raised AttributeError inside stream.job.run.
+        # Nothing caught it because nothing runs scripts/. tests/test_structural.py
+        # now compares this call against the attributes run() really reads.
+        sink="parquet",
+        duckdb=None,
         gap=gap,
         watermark=watermark,
         files_per_trigger=files_per_trigger,
