@@ -19,6 +19,7 @@ from pathlib import Path
 MODULES = [
     "tests.test_sessionize",
     "tests.test_scoring",
+    "tests.test_latency",
 ]
 
 
