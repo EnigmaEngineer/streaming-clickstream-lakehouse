@@ -1,5 +1,6 @@
-# Checked with ast over every .py file in the repo on 2026-08-15. Exactly two third
-# party imports exist. Anything not listed here is the standard library.
+# Checked with ast over every .py file in the repo on 2026-08-17. Four third party
+# imports exist. Anything not listed here is the standard library. The count is dated
+# because it was wrong on 2026-08-15 within a day of being written.
 #
 # ot-029 on the program side is about declaring packages nobody imports. Day 1
 # declared pyspark, python-dotenv and duckdb with not one line importing any of
@@ -26,3 +27,11 @@ duckdb==1.5.5
 # KafkaSink itself is still unrun, so this file no longer says the whole path is
 # untested. Half of it is.
 confluent-kafka==2.15.0
+
+# scripts/latency_dashboard.py only. It was MISSING for the whole of day 5 until an
+# ast pass caught it, and the reason it was invisible is that the sandbox already has
+# matplotlib and no test draws anything. That is the identical defect, in the identical
+# package, that this program found on another repo on 2026-08-08. A dependency the
+# build environment happens to satisfy is a dependency nothing will notice is absent.
+# Pinned to the version the day 5 chart was actually drawn on.
+matplotlib==3.10.9

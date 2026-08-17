@@ -341,6 +341,115 @@ ratios say anything about the pipeline.
 `stream/scoring.py` computes both sides and `tests/test_scoring.py` checks it against
 a two visit fixture whose answer is known by hand.
 
+## The latency floor, measured on 2026-08-17
+
+The goal line at the top of this project's brief asks for under a minute of end to end
+lag. The design the same brief specifies cannot reach it, and the gap is not close.
+This section is that arithmetic and its check against the pipeline's real output.
+
+**First, what is not measured here.** The corpus is a replay. Every event carries a
+timestamp the generator chose and the job reads the files minutes after they were
+written, so `now() - event_ts` is the age of the corpus. Publishing it as a p95 would
+be reporting how long ago the generator ran in the voice of a service level objective.
+No number below is a wall clock event to query lag, because this repo has no live
+producer to measure one against.
+
+**What is measured is the lag the design imposes.** Three terms. Rebuild the corpus
+with the commands in "The streaming job" above, then:
+
+```bash
+python -m stream.job --source file --path /tmp/events --out /tmp/sessions \
+    --checkpoint /tmp/ckpt --available-now --files-per-trigger 1 \
+    --progress-json /tmp/progress.json
+python -m scripts.latency_report --events /tmp/events --sessions /tmp/sessions \
+    --progress /tmp/progress.json
+```
+
+| term | p50 | p95 | p99 | where it comes from |
+|---|---|---|---|---|
+| ingest lag, seconds | 0.0 | 3.0 | 37.391 | `event_ts` to `ingest_ts` over the files |
+| emission delay, seconds | 1,920 | 1,920 | 1,920 | `gap + watermark`, a constant |
+| batch processing, ms | 1,107.5 | 2,435.9 | 3,828.0 | `addBatch` off the query progress |
+
+The emission delay is 99.94 percent of the total and it is the one term nobody calls
+latency. A session window ends one gap after its last event. Append mode emits a
+window once the watermark has passed its end, and the watermark trails the newest
+event time by the delay. So nothing can come out until the stream's clock has moved
+`gap + watermark` past the session's last event. At the defaults that is 1,800 plus
+120, which is **1,920 seconds against a 60 second goal, over by 32.02x**.
+
+That is not a tuning problem and no amount of hardware touches it. Processing is 1.1 s
+at the median and the whole budget is 1,921.1 s.
+
+**The floor is checked against the emitted data rather than left as algebra.**
+`session_end - session_start - duration_s` should equal the gap on every row, and over
+the 3,252 sessions of this run the minimum and the maximum are both exactly 1,800.0 s.
+Worth being clear about what that proves. Session end is *defined* as last event plus
+gap, so this confirms the code implements the definition. It is not independent
+evidence about Spark.
+
+**The median event waits longer than the floor.** Emission lag per event is p50
+2,548.75 s, p95 7,891.5 s and p99 8,767.7 s, against a floor of 1,920. The excess is
+session duration, because the first event of a session waits the whole session out on
+top of the structural delay. Session durations are p50 151.0 s and p95 4,619.6 s over
+the same run, and a long session holds more events, so the event weighted median sits
+well above the session median.
+
+**A cross check that the ingest term is reading real data.** 3,562 of 58,181 rows
+carry a nonzero lateness. The generator reports injecting 2,981 late events and
+emitting 581 duplicates, and a duplicate is re-stamped with a later `ingest_ts` by
+design. 2,981 plus 581 is 3,562, to the row.
+
+### Buying latency costs accuracy in both directions
+
+The session gap is the only knob that moves the floor, and it moves boundary accuracy
+at the same time. `scripts/latency_sweep.py` runs the whole pipeline at each setting
+and scores the output against `session_hint`. Watermark held at 2 minutes throughout.
+58,182 input rows and 7,022 true sessions, one shard per trigger.
+
+| session gap | emission floor, s | sessions out | merged, boundaries lost | split | events dropped |
+|---|---|---|---|---|---|
+| 1 minute | 180 | 8,443 | 0.1102 | 0.2348 | 0 |
+| 5 minutes | 420 | 4,917 | 0.3015 | 0.0017 | 0 |
+| 15 minutes | 1,020 | 3,888 | 0.4465 | 0.0001 | 0 |
+| 30 minutes | 1,920 | 3,252 | 0.5369 | 0.0000 | 0 |
+
+The 30 minute row reproduces day 3's published figures exactly, on a different day and
+a later tree. 3,252 sessions, miss rate 0.5369, no splits.
+
+**The thirty minute default is worse on latency and worse on merges.** It is 10.7x
+slower than a one minute gap and loses 4.9x more boundaries. The single thing it buys
+is never cutting a real visit in two. That is a real frontier and not a free lunch, so
+there is no dominant setting. Which end to pick depends on whether an over-counted
+session costs more than an under-counted one, and that is an application question
+rather than a Spark question. What is not defensible is picking 30 minutes because it
+is what the tutorials say.
+
+![the lag budget and the gap tradeoff](docs/latency-budget.png)
+
+Neither panel is drawn by anything that computes. `scripts/latency_dashboard.py` reads
+the two JSON files and draws. The ingest bar is absent rather than shown at 1 ms,
+because its p50 really is zero and a log axis has nowhere to put that.
+
+### The dedupe drop count was a data difference, not a code change
+
+Day 4 opened `ot-039`. `dropDuplicatesWithinWatermark` refused 0 rows on day 3 and 98
+on day 4, and turning 0 into 98 needed an explanation that neither day had.
+
+Day 3's corpus was rebuilt from its recorded command and run through today's tree.
+It read 58,182 input rows, matching day 3 to the row. The dedupe refused **0**, which
+is day 3's answer exactly. So nothing in the day 4 or day 5 diff moved the dedupe
+operator. It is sensitive to the corpus and not to the code.
+
+The rest of that thread does not close, and the reason is worth stating. **Day 4's
+corpus cannot be rebuilt, because the command that produced it was never written
+down.** A corpus built to day 4's described settings gives 58,167 rows against day 4's
+58,158 and an independent late count of 38 against 124, so it is a similar corpus and
+not that corpus. The dedupe refused 2 on it. The figure "98 against 124" therefore
+rests on an input nobody can reconstruct, including a later run of this project, and
+it is marked as such above rather than repeated as though it were checkable. Every
+command that builds a corpus quoted here is now in this README.
+
 ## The warehouse sink
 
 Stage, merge, clear. A batch lands in `sessions_stage`. One MERGE moves it into
@@ -377,13 +486,13 @@ an arbitrary winner. No batch in the 2026-08-16 run contained one.
 
 ## Status
 
-Day 4 of 7.
+Day 5 of 7.
 
 - [x] Day 1: compose stack, event schema, decisions doc
 - [x] Day 2: producer with rate control. Late events, duplicates and a visit model
 - [x] Day 3: streaming job. parse / dedupe / watermark / sessionize
 - [x] Day 4: feature extraction, staged MERGE sink, partitioner probe
-- [ ] Day 5: latency and throughput metrics
+- [x] Day 5: latency and throughput metrics, the gap tradeoff sweep
 - [ ] Day 6: failure testing, replay, duplicate verification
 - [ ] Day 7: benchmarks and writeup
 
@@ -416,6 +525,24 @@ Day 4 of 7.
 - **The gap aware model of late data admission is an upper bound.** It predicts the
   30 minute gap result exactly and over-predicts at a 2 minute gap. Something further
   loosens the filter and it has not been identified.
+- **No wall clock latency has been measured and none can be here.** Every lag figure
+  above is the delay the design imposes, computed from the pipeline's own output. A
+  real number needs a live producer and a query running against the warehouse at the
+  same time, which is day 6 and 7 work at best and needs a broker.
+- **The day 4 dedupe figure rests on a corpus that cannot be rebuilt.** 98 refusals
+  against an independent count of 124 came off an input whose generator command was
+  never recorded. The claim it supports is narrow and it is not checkable. Day 3's
+  corpus is rebuildable and reproduces exactly.
+- **`scripts/watermark_sweep.py` raised AttributeError for a day and nothing noticed.**
+  Day 4 added `--sink` to the job and the hand built namespace in that script was not
+  updated, so every run of the script that produces the watermark table died on the
+  first arm. Fixed, and `tests/test_structural.py` now compares every hand built
+  namespace against the attributes `stream.job.run` really reads. Nothing in the suite
+  executes a script, so that class of break needs a check that reads source.
+- **The lag budget adds three p50 values as if they composed.** The median of a sum is
+  not the sum of medians. At these magnitudes the conclusion does not depend on it,
+  since one term is 99.94 percent of the total, and on a corpus where the terms were
+  comparable this arithmetic would need replacing with a real convolution.
 - **The visit pool holds one state per user seen** and never evicts. At a few million
   users that is a memory problem.
 - **A duplicate is always a whole-record copy.** A real retry storm also produces
