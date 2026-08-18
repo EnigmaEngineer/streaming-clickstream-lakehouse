@@ -98,13 +98,18 @@ def check_the_run_is_reproducible_at_a_fixed_seed():
     assert strip(a) == strip(b), "the same seed produced different traffic"
 
 
-def check_the_kafka_sink_refuses_rather_than_pretending():
-    try:
-        build_sink("kafka", None)
-    except (NotImplementedError, ImportError, ModuleNotFoundError) as e:
-        assert "kafka" in str(e).lower(), str(e)
-    else:
-        raise AssertionError("the kafka sink returned something on a day it cannot work")
+def check_the_kafka_sink_refuses_without_a_broker_and_a_topic():
+    # Until day 6 this asserted NotImplementedError, because the sink had never run
+    # against a broker and a path nobody has executed is worse than an absent one. It
+    # has now run, so what is left to check is that it will not quietly produce into
+    # the default topic on a caller who forgot to name one.
+    for brokers, topic in (("", ""), ("127.0.0.1:9092", ""), ("", "clickstream.events")):
+        try:
+            build_sink("kafka", None, brokers, topic)
+        except (ValueError, ImportError, ModuleNotFoundError) as e:
+            assert "kafka" in str(e).lower() or "topic" in str(e).lower(), str(e)
+        else:
+            raise AssertionError(f"kafka sink built with brokers={brokers!r} topic={topic!r}")
 
 
 def check_an_unknown_sink_name_is_refused():

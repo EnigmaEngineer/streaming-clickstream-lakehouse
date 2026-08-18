@@ -174,7 +174,7 @@ def partition_skew(stats: Stats, partitions: int) -> dict:
     }
 
 
-def build_sink(name: str, path: str | None):
+def build_sink(name: str, path: str | None, brokers: str = "", topic: str = ""):
     if name == "null":
         return NullSink()
     if name == "memory":
@@ -186,11 +186,14 @@ def build_sink(name: str, path: str | None):
             raise ValueError("--out is required with --sink file")
         return JsonlSink(open(path, "w", encoding="utf-8"))
     if name == "kafka":
+        # This raised NotImplementedError from day 2 to day 5, on the rule that a path
+        # nobody has run is worse than an absent one. Day 6 ran it against a 3.7.1
+        # KRaft broker, so the guard came off and the README says which broker.
         from generator.sinks import KafkaSink  # noqa: PLC0415
 
-        raise NotImplementedError(
-            "the kafka sink exists but has never been run against a broker, see day 3"
-        )
+        if not brokers or not topic:
+            raise ValueError("--brokers and --topic are required with --sink kafka")
+        return KafkaSink(brokers, topic)
     raise ValueError(f"unknown sink {name!r}")
 
 
@@ -215,6 +218,8 @@ def main(argv=None) -> int:
     p.add_argument("--visit-events", type=float, default=6.0, help="median events per visit")
     p.add_argument("--sink", default="null", choices=["null", "memory", "stdout", "file", "kafka"])
     p.add_argument("--out", default=None)
+    p.add_argument("--brokers", default="127.0.0.1:9092")
+    p.add_argument("--topic", default="clickstream.events")
     p.add_argument("--report", action="store_true", help="print a stats block to stderr")
     a = p.parse_args(argv)
 
@@ -233,7 +238,7 @@ def main(argv=None) -> int:
         pool=a.pool,
         visit_events=a.visit_events,
     )
-    sink = build_sink(a.sink, a.out)
+    sink = build_sink(a.sink, a.out, a.brokers, a.topic)
     stats = run(cfg, sink)
     sink.close()
     if a.report:
