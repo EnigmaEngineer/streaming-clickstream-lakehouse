@@ -21,6 +21,7 @@ MODULES = [
     "tests.test_warehouse",
     "tests.test_lag",
     "tests.test_structural",
+    "tests.test_recovery",
 ]
 
 
