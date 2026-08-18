@@ -64,6 +64,11 @@ def one(path: str, work: Path, gap: str, watermark: str, files_per_trigger: int)
         available_now=True,
         seconds=0.0,
         log_level="ERROR",
+        # crash_batch and crash_point arrived on day 6. Same shape as the day 4
+        # omission above, and this time tests/test_structural.py failed on the first
+        # run after run() started reading them.
+        crash_batch=None,
+        crash_point="after-merge",
     )
     summary = run(args)
     ops = summary["state_operators"]

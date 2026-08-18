@@ -20,6 +20,7 @@ MODULES = [
     "tests.test_sessionize",
     "tests.test_scoring",
     "tests.test_latency",
+    "tests.test_replay",
 ]
 
 

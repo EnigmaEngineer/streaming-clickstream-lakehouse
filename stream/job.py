@@ -127,6 +127,37 @@ def duckdb_sink(db_path: str, batches: list):
     return sink
 
 
+class InjectedCrash(RuntimeError):
+    """Deliberate. Raised by `crash_at` and by nothing else.
+
+    Day 6 needs the job to die at a point it chooses. Killing the process from
+    outside works and it cannot say whether the merge for that batch had run, which
+    is the only thing the replay question turns on.
+    """
+
+
+def crash_at(sink, batch: int, point: str):
+    """Wrap a foreachBatch function so it dies at a chosen batch.
+
+    Two points and they are not the same experiment. `before-merge` leaves the batch
+    planned with nothing written, so the restart has to redo work. `after-merge`
+    leaves the rows in the warehouse with no commit file beside them, so the restart
+    redoes a batch that already landed. That second one is the whole reason an
+    idempotent MERGE is in this repo.
+    """
+    if point not in ("before-merge", "after-merge"):
+        raise ValueError(f"unknown crash point {point!r}")
+
+    def wrapped(df, epoch_id: int) -> None:
+        if epoch_id == batch and point == "before-merge":
+            raise InjectedCrash(f"crash before merge, batch {epoch_id}")
+        sink(df, epoch_id)
+        if epoch_id == batch and point == "after-merge":
+            raise InjectedCrash(f"crash after merge, batch {epoch_id}")
+
+    return wrapped
+
+
 def run(args) -> dict:
     spark = spark_session(shuffle_partitions=args.shuffle_partitions)
     spark.sparkContext.setLogLevel(args.log_level)
@@ -141,7 +172,10 @@ def run(args) -> dict:
     merged: list = []
     writer = sessions.writeStream.outputMode("append").option("checkpointLocation", args.checkpoint)
     if args.sink == "duckdb":
-        writer = writer.foreachBatch(duckdb_sink(args.duckdb, merged))
+        fn = duckdb_sink(args.duckdb, merged)
+        if args.crash_batch is not None:
+            fn = crash_at(fn, args.crash_batch, args.crash_point)
+        writer = writer.foreachBatch(fn)
     else:
         writer = writer.format("parquet").option("path", args.out)
     query = writer.trigger(availableNow=True).start() if args.available_now else writer.start()
@@ -187,7 +221,13 @@ def main(argv=None) -> int:
     p.add_argument("--log-level", default="ERROR")
     p.add_argument("--progress", action="store_true", help="print the query progress summary")
     p.add_argument("--progress-json", help="write the raw per batch progress here, for scripts.latency_report")
+    p.add_argument("--summary-json", help="write the summary here, without raw_progress")
+    p.add_argument("--crash-batch", type=int, default=None, help="die at this batch, for scripts.replay_matrix")
+    p.add_argument("--crash-point", default="after-merge", choices=["before-merge", "after-merge"])
     a = p.parse_args(argv)
+
+    if a.crash_batch is not None and a.sink != "duckdb":
+        p.error("--crash-batch only means anything with --sink duckdb")
 
     if a.source == "file" and not a.path:
         p.error("--path is required with --source file")
@@ -200,6 +240,12 @@ def main(argv=None) -> int:
     if a.progress_json:
         with open(a.progress_json, "w", encoding="utf-8") as fh:
             json.dump(summary["raw_progress"], fh)
+    if a.summary_json:
+        # Separate from --progress-json rather than folded into it. That file is read
+        # by scripts.latency_report and it expects a list of batches, so widening it
+        # would break the day 5 table to save one flag.
+        with open(a.summary_json, "w", encoding="utf-8") as fh:
+            json.dump({k: v for k, v in summary.items() if k != "raw_progress"}, fh, default=str)
     if a.progress:
         # raw_progress is 14 batches of nested timing dicts. Printing it here would
         # bury the summary it sits beside, so it goes to a file or nowhere.
