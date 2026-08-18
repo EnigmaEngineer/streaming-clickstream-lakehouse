@@ -484,27 +484,106 @@ DuckDB refuses it too, which `tests/test_merge.py` checks rather than assumes, s
 guard is a better error message and not the only thing standing between a replay and
 an arbitrary winner. No batch in the 2026-08-16 run contained one.
 
+## Failure and replay, measured 2026-08-18
+
+Day 6 is the day the exactly-once claim gets attacked. `stream/job.py` takes
+`--crash-batch` and `--crash-point`, which kill the job at a chosen batch either side
+of the MERGE. `scripts/replay_matrix.py` drives five arms and compares each final
+table against the clean one. `stream/recovery.py` reads the checkpoint and says which
+batch a restart is going to redo.
+
+Corpus for all five arms: 17,441 rows in 8 shards plus one flush sentinel, one shard
+per trigger, 10 batches.
+
+```bash
+python -m generator.produce --rate 0.8 --seconds 21600 --speedup 500000 --seed 6 \
+    --users 4000 --alpha 1.2 --partitions 6 --sink file --out /tmp/all6.jsonl
+mkdir -p /tmp/c6 && (cd /tmp/c6 && split -n l/8 -d --additional-suffix=.json /tmp/all6.jsonl shard-)
+python -m scripts.flush_shard --dir /tmp/c6 --hours 6
+python -m scripts.replay_matrix --arm clean --corpus /tmp/c6 --work /tmp/rm
+```
+
+| arm | what happened | rows at the crash | final rows | verdict |
+|---|---|---|---|---|
+| clean | no crash | | 1,626 | baseline |
+| crash-after | died after batch 4 merged | 793 | 1,626 | identical |
+| crash-before | died before batch 4 merged | 429 | 1,626 | identical |
+| fresh-checkpoint | checkpoint deleted, same warehouse | | 1,626 | identical |
+| wiped-warehouse | checkpoint kept, warehouse deleted | | 0 | **rows lost** |
+
+Duplicate merge keys in every arm: 0. Both crash arms left exactly one batch planned
+and uncommitted, batch 4, and the restart redid batch 4 and then added 5 through 9.
+
+**The checkpoint contributes nothing to the correctness of this table.** Delete it and
+rerun everything from the start and the fingerprint is byte for byte the one the clean
+run produced. What makes the replay safe is the merge key, and that is a property of
+`warehouse/sql.py` rather than of Structured Streaming.
+
+**The checkpoint can still lose the whole table on its own.** Keep it and lose the
+warehouse. The job reads its own commit log, concludes there is nothing left to do,
+and finishes clean with an empty target. No error and no warning. Exactly-once is a
+joint property of two pieces of state that live in different systems, and nothing
+checks that they still agree.
+
+That asymmetry is the useful part. The checkpoint is a progress optimisation that
+carries a correctness liability, and the usual framing has it the other way round.
+
+## Kafka, end to end, 2026-08-18
+
+`generator/sinks.py` had a `KafkaSink` from day 2 that had never been run, and
+`build_sink` raised `NotImplementedError` rather than returning it. Day 6 ran it
+against a real broker, so the guard came off.
+
+Broker: Kafka 3.7.1 in KRaft mode, 6 partitions, listeners pinned to `127.0.0.1`.
+
+```
+generator.produce --sink kafka   5,446 events, 0 delivery failures
+sentinel                         1 event
+stream.job --source kafka        2 batches, 5,447 input rows, 708 sessions landed
+checkpoint offsets at batch 1    p0 1049  p1 833  p2 682  p3 870  p4 1098  p5 915
+```
+
+Those six offsets sum to 5,447, which is what the producer sent. That is the check
+worth having, because it is the only one that ties the broker's own bookkeeping to
+the row count the job reports.
+
+Two batches rather than ten, because there is no `maxOffsetsPerTrigger` here. The
+per batch behaviour in the replay table above is a property of `maxFilesPerTrigger`
+on the file source, not of the pipeline.
+
+The Kafka connector is not in the base pyspark install. Add it with
+`--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6`, or point
+`PYSPARK_SUBMIT_ARGS` at downloaded jars, which is what this run did.
+
 ## Status
 
-Day 5 of 7.
+Day 6 of 7.
 
 - [x] Day 1: compose stack, event schema, decisions doc
 - [x] Day 2: producer with rate control. Late events, duplicates and a visit model
 - [x] Day 3: streaming job. parse / dedupe / watermark / sessionize
 - [x] Day 4: feature extraction, staged MERGE sink, partitioner probe
 - [x] Day 5: latency and throughput metrics, the gap tradeoff sweep
-- [ ] Day 6: failure testing, replay, duplicate verification
+- [x] Day 6: failure testing and replay. Duplicate verification and Kafka end to end
 - [ ] Day 7: benchmarks and writeup
 
 ## Limitations, today
 
-- **A broker has now produced and consumed, and no data has flowed through it into
-  Spark.** Day 4 stood Kafka 3.7.1 up and settled the partitioner question, so
-  `crc32_partition` is measured rather than asserted. `generator/sinks.py` KafkaSink
-  and `stream/job.py --source kafka` are both still unrun. The end to end path is
-  file source to Spark to DuckDB, which proves the watermark and dedupe and session
-  and merge code and proves nothing about offsets, consumer groups or replay from a
-  broker.
+- **The Kafka path has run exactly once. One broker and one corpus.** Day 6 produced
+  5,446 events through `KafkaSink` and read them back through `--source kafka`, and
+  the checkpoint offsets sum to the produced count. Everything measured about
+  watermarks, gaps and replay still came off the file source, because a broker will
+  not fit alongside a five arm matrix in this sandbox. One clean end to end run is not
+  the same as the numbers having been taken there.
+- **The crash arms were never restarted against Kafka.** The replay matrix runs on the
+  file source, whose offset is a log ordinal. A Kafka restart resumes from a committed
+  partition offset instead, and the failure modes around a rebalancing consumer group
+  are not exercised by anything here.
+- **`wiped-warehouse` is a measured failure and not a fixed one.** Nothing in this
+  repo detects that the checkpoint and the warehouse have drifted apart. The obvious
+  guard is to record the last committed batch id in the warehouse inside the same
+  transaction as the merge, and compare the two at startup. That was not built today,
+  because a batch id column changes the table every number since day 4 rests on.
 - **The warehouse is DuckDB and the Snowflake statements have never run.** They are
   written beside the ones that did and labelled, in `warehouse/sql.py`. Snowflake also
   accepts a PRIMARY KEY declaration without enforcing it, so on that side the
@@ -528,7 +607,9 @@ Day 5 of 7.
 - **No wall clock latency has been measured and none can be here.** Every lag figure
   above is the delay the design imposes, computed from the pipeline's own output. A
   real number needs a live producer and a query running against the warehouse at the
-  same time, which is day 6 and 7 work at best and needs a broker.
+  same time. Day 6 had a live producer and did not build it, because the corpus is
+  still a replay of historical timestamps and the answer would be the age of the
+  events rather than the latency of the system.
 - **The day 4 dedupe figure rests on a corpus that cannot be rebuilt.** 98 refusals
   against an independent count of 124 came off an input whose generator command was
   never recorded. The claim it supports is narrow and it is not checkable. Day 3's
