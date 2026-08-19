@@ -5,12 +5,16 @@ writes. Built to handle the parts of streaming that actually break: late events,
 duplicates, and reruns.
 
 ```bash
-./scripts/setup.sh                                        # kafka + minio up, topic created
+python -m tests.run_all                    # 115 checks, standard library only
+python scripts/measure_generator.py        # every generator number below
 python -m generator.produce --rate 200 --seconds 5 --report
-python -m tests.run_all                                   # 63 checks, no install needed
-python -m tests.run_warehouse                             # 9 checks, needs duckdb
-python -m tests.run_spark                                 # 33 checks, needs pyspark
-python scripts/measure_generator.py                       # every generator number below
+
+pip install -r requirements.txt
+python -m tests.run_warehouse              # 9 checks, needs duckdb
+python -m tests.run_spark                  # 51 checks, needs pyspark
+
+./scripts/bootstrap-local.sh               # kafka on the jvm, no docker
+./scripts/teardown.sh --purge              # stop it and remove the state
 ```
 
 The generator and `tests/run_all.py` need nothing installed. Standard library only.
@@ -18,28 +22,50 @@ The generator and `tests/run_all.py` need nothing installed. Standard library on
 named for the install it needs. All three are real and all three have to pass. None of
 them skips when its dependency is missing.
 
+Kafka is only needed for the Kafka source and sink. Everything measured below runs off
+the file source, which needs no broker at all.
+
 ## Architecture
 
 ```
-  generator          Kafka                 Spark Structured Streaming            Snowflake
- ┌──────────┐    ┌───────────┐   ┌──────────────────────────────────────┐   ┌──────────────┐
- │ synthetic│───▶│clickstream│──▶│ parse → watermark → dedupe → session │──▶│ sessions     │
- │ events   │    │ .events   │   │ window → feature extraction          │   │ (MERGE)      │
- │ + late   │    │ 6 parts   │   └──────────────────────────────────────┘   └──────────────┘
- │ + dupes  │    │ key=user  │                    │
- └──────────┘    └───────────┘                    ▼
-                                            checkpoint dir
-                                         (offsets + session state)
+                            bootstrap-local.sh / docker compose
+                                          │
+  generator/                    Kafka     ▼            stream/                  warehouse/
+ ┌───────────────┐          ┌───────────────────┐  ┌──────────────────┐   ┌──────────────────┐
+ │ population    │          │ clickstream.events│  │ parse            │   │ sessions_stage   │
+ │  zipf tail    │          │ 6 partitions      │  │ withWatermark    │   │      │           │
+ │ arrivals      │  ──────▶ │ key = user_id     │─▶│ dedupe in wm     │──▶│      ▼ MERGE     │
+ │  visit pool   │  or      │ crc32 partitioner │  │ session window   │   │ sessions         │
+ │ session       │  file    └───────────────────┘  │ features         │   │  key (user_id,   │
+ │  funnel+truth │  shards                         └──────────────────┘   │       session_   │
+ │ produce       │                                          │             │       start)     │
+ │  late + dupes │                                          ▼             └──────────────────┘
+ └───────────────┘                                    checkpoint/                   │
+         │                                          offsets + commits               │
+         │ session_hint                              + session state                │
+         │ (ground truth,                                                           │
+         │  never read by                                                           ▼
+         │  the pipeline)  ─────────────────────────────────────────────▶  stream/scoring.py
+                                                                            recovered vs true
 ```
 
-Key is `user_id` so all of a user's events land on one partition. **The reason written
-here until day 4 was that session windows need that to keep state local, and that is
-wrong.** Spark reshuffles by the grouping key on its own. The physical plan for
-`session_windows` carries `Exchange hashpartitioning(user_id, 8)`, so whatever the
-broker did with the key is undone before the aggregation ever sees it. Keying still
-buys per-user ordering at the broker and it buys nothing at all for Spark state.
+Three things in that picture are worth naming, because each of them turned out to be
+different from what day 1 assumed.
 
-The second half of that sentence was right and is now measured. See below.
+**The key buys ordering at the broker and nothing for Spark.** `Exchange
+hashpartitioning(user_id, 8)` sits in front of the session window aggregation, so the
+partitioning the producer chose is undone before the state is built.
+
+**The checkpoint and the warehouse are two pieces of state and nothing checks they
+agree.** Delete the checkpoint and reprocess everything and the table is byte identical.
+Delete the table and keep the checkpoint and the job exits clean with zero rows.
+
+**`session_hint` is the ground truth and the pipeline never reads it.** Scoring joins
+the raw events back onto the emitted windows, so what gets graded is the real output.
+
+The reason written here until day 4 was that session windows need the key to keep state
+local. That was wrong and it had sat unchecked since day 1. `explain` answers it in one
+command and nobody had run it. The partitioner section below is the measurement.
 
 ## The generator
 
@@ -53,7 +79,7 @@ The second half of that sentence was right and is now measured. See below.
 | `session.py` | The funnel, the referrer chain, and the ground truth session boundary. |
 | `events.py` | Assembles the record. |
 | `produce.py` | Rate control, late-event injection, duplicate emission. |
-| `sinks.py` | jsonl, stdout, memory, null, and an untested Kafka path. |
+| `sinks.py` | jsonl, stdout, memory, null, and a Kafka path that has now run. |
 
 `stream/` reads it back.
 
@@ -61,9 +87,12 @@ The second half of that sentence was right and is now measured. See below.
 |---|---|
 | `schema.py` | The declared wire schema and the one place a timestamp is built. |
 | `sessionize.py` | parse, watermark, dedupe, session windows, and the door they compose into. |
-| `job.py` | Source, sink, and the query progress numbers pulled off the running query. |
+| `job.py` | Source, sink, crash injection, and the progress numbers off the running query. |
 | `features.py` | The four per-session features and why duration is not the window span. |
 | `scoring.py` | The comparison against `session_hint`. Nothing in the pipeline imports it. |
+| `lag.py` | The lag arithmetic. Pure functions, no pyspark import. |
+| `latency.py` | The half of the lag report that needs a DataFrame. |
+| `recovery.py` | Reads a checkpoint and says which batch a restart will redo. Standard library. |
 
 `warehouse/` lands them.
 
@@ -72,17 +101,22 @@ The second half of that sentence was right and is now measured. See below.
 | `sql.py` | Every statement in both dialects, and which of them have ever run. |
 | `merge.py` | Stage, merge, clear. The only function that writes to `sessions`. |
 
-## Measured on 2026-08-14
+## Measured on 2026-08-19, re-run on day 7
 
 Every figure here comes out of `scripts/measure_generator.py` on this machine on that
 date. Re-run it and they move. Sandbox speed varies by about 1.8x between days, so
 treat the ratios as the durable part.
 
-**Throughput ceiling.** 37,226 events per wall second with the pacer switched off,
-median of five passes after a discarded warmup, range 37,012 to 37,327.
+Day 7 re-ran the whole script against the day 2 figures it replaced. Everything seeded
+came back to the digit. The counted quantities reproduced exactly, and the two things
+that moved are both timings.
+
+**Throughput ceiling.** 39,193 events per wall second with the pacer switched off,
+median of five passes after a discarded warmup, range 39,128 to 39,298. Day 2 measured
+37,226 on the same code. That is 5.3 percent of machine and nothing else.
 
 **Rate control.** Ask for 50, 500 or 5,000 events per second and the run comes back
-1.10, 0.21 and 0.11 percent high. The error shrinks as the rate rises, because the
+1.09, 0.21 and 0.13 percent high. The error shrinks as the rate rises, because the
 overshoot is a fixed per-sleep cost divided by more events.
 
 **Partition skew at six partitions.** Heavier tail, busier partition.
@@ -234,8 +268,12 @@ The dedupe operator is reported as its own column above for exactly this reason.
 day 3 it refused 0 rows at a 2 minute watermark against an independent Python count
 of 25 sitting below it. On day 4, on a different corpus, it refused 98 against an
 independent count of 124. The session window operator dropped 0 on both days, so the
-finding above is untouched. Turning 0 of 25 into 98 of 124 needs a mechanism and I do
-not have one. It is being chased rather than smoothed over.
+finding above is untouched. Day 5 chased the difference and half of it closed. See
+"The dedupe drop count was a data difference" below for where that landed and for the
+half that can never close.
+
+Day 7 re-ran the whole of this table's corpus on a later tree again. 58,182 input
+rows, 14 batches, and both operators dropped 0. Same as day 3 and same as day 5.
 
 ### Scoring against ground truth
 
@@ -340,6 +378,33 @@ ratios say anything about the pipeline.
 
 `stream/scoring.py` computes both sides and `tests/test_scoring.py` checks it against
 a two visit fixture whose answer is known by hand.
+
+### The same table on a second corpus, and one ratio does not behave
+
+Day 7 ran the identical scorer over the day 3 corpus, which is a lower boundary miss
+rate on a slower arrival rate. 58,182 events over 7,022 true sessions. 3,252 recovered
+and a miss rate of 0.5369 against 0.645 above.
+
+| feature | ratio at miss 0.645 | ratio at miss 0.5369 |
+|---|---|---|
+| conversion rate | 1.368 | 1.337 |
+| bounce rate | 0.721 | 0.680 |
+| events per session | 2.812 | 2.159 |
+| pages per session | 1.968 | 1.654 |
+| duration, seconds | 4.061 | **5.724** |
+
+Four of the five move toward 1 as the miss rate falls, which is what merging fewer
+visits should do. **Duration goes the other way.** Fewer merges and a bigger error.
+
+The reason is that duration is the only feature whose inflation is not a count. Merging
+two visits adds one inter visit gap to the duration, and how long that gap is depends
+on the arrival rate rather than on how often merges happen. The day 3 corpus runs at 8
+events per second against several hundred, so its visitors are away for far longer and
+each merge costs far more seconds.
+
+So a reader cannot take the miss rate as a correction factor for the features. It ranks
+four of them and it is the wrong variable for the fifth. That was not obvious from one
+corpus and the one corpus version of this table was written on day 4.
 
 ## The latency floor, measured on 2026-08-17
 
@@ -555,9 +620,51 @@ The Kafka connector is not in the base pyspark install. Add it with
 `--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.6`, or point
 `PYSPARK_SUBMIT_ARGS` at downloaded jars, which is what this run did.
 
+## Running it, and stopping it
+
+Two ways up. Only one of them has ever run here.
+
+```bash
+./scripts/bootstrap-local.sh      # kafka 3.7.1 in kraft mode, on the jvm, no docker
+./scripts/teardown.sh             # stop the broker, keep the data
+./scripts/teardown.sh --purge     # also remove broker state and the scratch paths
+```
+
+`bootstrap-local.sh` downloads the tarball on first use, formats a KRaft storage
+directory, starts the broker with a 640 MB heap and creates the topic with six
+partitions. Everything it writes goes under `RUN_DIR`, which defaults to
+`/tmp/clickstream-local`. Set `KAFKA_TARBALL` to a copy you already have and the
+download is skipped.
+
+`teardown.sh` handles both paths and says what it found for each. It sends SIGTERM and
+waits, because Kafka flushes its log segments on the way out and a SIGKILL makes the
+next start replay the whole log. `--purge` removes the broker state and the scratch
+paths the commands in this README write to, named one at a time rather than by
+wildcard. It keeps the tarball, because re-downloading 120 MB to run the tests again is
+a bad default.
+
+Verified on 2026-08-19, one full lifecycle inside a single shell call.
+
+```
+bootstrap-local.sh                          ready in 20.4 s, topic created
+generator.produce --sink kafka              4,824 events emitted
+kafka-get-offsets.sh                        883 943 624 934 770 670
+                                            sum 4,824, exact
+teardown.sh --purge                         broker stopped, state removed
+```
+
+The offset sum is the check worth having. Anything else compares the producer against
+itself.
+
+**`scripts/setup.sh` is the Docker path and it has never run.** It was the first
+command in this README for six days and it needs a daemon the machine every number came
+off does not have. It is kept for a laptop that has one. That is also how MinIO stayed
+in the compose file for seven days without anything ever connecting to it. See
+`docs/decisions.md`.
+
 ## Status
 
-Day 6 of 7.
+Day 7 of 7. Code complete on the blueprint.
 
 - [x] Day 1: compose stack, event schema, decisions doc
 - [x] Day 2: producer with rate control. Late events, duplicates and a visit model
@@ -565,7 +672,68 @@ Day 6 of 7.
 - [x] Day 4: feature extraction, staged MERGE sink, partitioner probe
 - [x] Day 5: latency and throughput metrics, the gap tradeoff sweep
 - [x] Day 6: failure testing and replay. Duplicate verification and Kafka end to end
-- [ ] Day 7: benchmarks and writeup
+- [x] Day 7: benchmarks and architecture, teardown, plus the drift audit
+
+## Benchmarks, all re-measured on 2026-08-19
+
+Every row below was produced on day 7 by the command beside it, on one machine, in one
+session. Nothing here is carried forward from an earlier day's write up. Two figures in
+this repo have already been found sitting in prose after the thing that produced them
+had changed, so the day 7 pass re-ran everything rather than trusting the text.
+
+Corpus for the streaming rows, rebuilt from the command in "The streaming job" above:
+58,182 rows in 12 shards plus one flush sentinel. 7,022 true sessions.
+
+| what | value | produced by |
+|---|---|---|
+| generator ceiling | 39,193 events/s | `scripts/measure_generator.py` |
+| rate error at 5,000/s | 0.13% high | `scripts/measure_generator.py` |
+| busiest partition, alpha 1.0 | 1.274x even | `scripts/measure_generator.py` |
+| batches, input rows | 14, 58,182 | `stream.job --progress` |
+| dropped by session window | 0 | `stream.job --progress` |
+| dropped by dedupe | 0 | `stream.job --progress` |
+| sessions recovered | 3,252 | `scripts.score_sessions` |
+| boundary miss rate | 0.5369 | `scripts.score_sessions` |
+| split true sessions | 0 | `scripts.score_sessions` |
+| ingest lag p95 / p99, s | 3.0 / 37.391 | `scripts.latency_report` |
+| emission floor, s | 1,920 | `scripts.latency_report` |
+| add_batch p50 / p95, ms | 1,069 / 2,600 | `scripts.latency_report` |
+| throughput through the job | 2,748 rows/s | `scripts.latency_report` |
+| over the 60 s goal by | 32.02x | `scripts.latency_report` |
+| warehouse rows, first run | 3,252 inserted, 0 updated | `stream.job --sink duckdb` |
+| warehouse rows, replay | 0 inserted, 3,252 updated | `stream.job --sink duckdb` |
+| fingerprint, both runs | `3252:f6ebcc2dd94e5deda1717e7708e934f1` | `scripts.replay_matrix` |
+| kafka produced / broker offsets | 4,824 / 4,824 | `bootstrap-local.sh` then `kafka-get-offsets.sh` |
+| tests | 115 + 9 + 51 = 175 | `tests.run_all`, `run_warehouse`, `run_spark` |
+
+**What reproduced and what did not.** Every counted quantity reproduced exactly against
+the day it was first measured. 58,182 rows over 7,022 true sessions. 3,252 recovered at
+a miss rate of 0.5369. Zero drops on both operators. An emission floor of 1,920 s and a
+trailing gap whose minimum and maximum are both 1,800.0 s. The generator's seeded
+tables came back to the digit, including the five row population sweep.
+
+Everything that moved is a timing. Generator ceiling up 5.3 percent, `add_batch` p50
+down 3.5 percent and p95 up 6.7 percent. That is the machine and it is why the ratios
+in this file are the durable part and the milliseconds are dated.
+
+**The counts in the quick start block at the top of this file were wrong for four
+days.** They said 63, 9 and 33 checks. The real numbers are 115, 9 and 51. Nothing in
+the repo produced that line and nothing could contradict it, which is the same defect
+this project found in a README figure on day 5.
+
+`scripts/reproduction_report.py` holds all 25 pairs and prints the verdict per figure.
+The rule is in `stream/repro.py`, which has 8 checks over it, and it is one rule with
+two branches. **A counted quantity reproduces exactly or it is broken, with no
+tolerance band.** A timing that moves is expected. The band is the thing worth arguing
+about, and this project has a specific reason for setting it at zero. A figure on
+another repo in this program was wrong by 0.24 percent, was published four times, and
+any tolerance loose enough to be comfortable would have waved it through.
+
+```bash
+python scripts/reproduction_report.py --chart docs/reproduction.png
+```
+
+![day 7 reproduction check](docs/reproduction.png)
 
 ## Limitations, today
 
@@ -633,5 +801,53 @@ Day 6 of 7.
   conclusion about `session.py`.
 - **`admissions_deflected` changes the visit length distribution** when it fires, and
   the report says how often rather than correcting for it.
+- **`bootstrap-local.sh` has been run on one machine and one OS.** It works and it is
+  the path every Kafka number here came off. It assumes `curl` and `tar` and `nohup`
+  and a JVM on the path. It has not been near macOS or a machine where port 9092 is
+  already taken. `docker/docker-compose.yml` is still there for the laptop case and it
+  is still the path nothing here has executed.
+- **The boundary miss rate is not a correction factor for the features.** It ranks four
+  of the five and it is the wrong variable for duration, whose inflation is set by the
+  inter visit gap rather than by how often merges happen. Two corpora were enough to
+  show that and one was not.
+- **MinIO and `.env.example` were removed on day 7, not fixed.** Nothing in this repo
+  reads an environment variable and nothing ever spoke S3, so both were describing a
+  system that did not exist. The alternative was to build the S3 staging step the
+  compose file implied, and inventing an untested code path on the last day to justify
+  a container is the wrong trade.
+
+## What I would do differently
+
+Four things, in the order I would spend the time.
+
+**Guard the checkpoint against the warehouse, and accept the schema change.** Day 6
+measured a job that keeps its checkpoint, loses its target table and exits clean with
+zero rows. That was left unfixed on day 6 for a specific reason. The guard is a last
+committed batch id written into the warehouse inside the same transaction as the MERGE
+and compared at startup, and that adds a column to `sessions`, which is the table every
+figure since day 4 rests on. Publishing a number measured against a schema that no
+longer exists is worse than shipping the gap named. **Day 7 keeps that decision and I
+think it is the wrong long term answer.** On a real system the schema moves and the
+numbers get retaken, and a silent zero row success is the worst failure mode in this
+repo. If there were an eighth day it would be spent here.
+
+**Point the pipeline at a live producer.** Every latency figure here is the delay the
+design imposes, computed from the pipeline's own output. There is no wall clock event
+to query number and there cannot be one while the corpus is a replay of historical
+timestamps, because `now() - event_ts` would be the age of the files. Day 6 had a live
+broker and did not build it. That is the one blueprint promise this repo answers with
+arithmetic instead of a measurement, and the README says so rather than dressing the
+arithmetic up.
+
+**Stop trusting the session gap as a single setting.** The sweep shows a real frontier
+and no dominant point. A one minute gap is 10.7x faster and loses 4.9x fewer boundaries
+and splits a quarter of real visits. Thirty minutes never splits anything and merges
+more than half. The interesting build is two gaps at once, a fast one for anything that
+needs latency and a slow one for the counts, rather than one number argued about.
+
+**Check the second document.** The README was rewritten every day for a week and
+`docs/decisions.md` was not, so on day 7 it still said session windows need broker
+partition locality. The README retracted that on day 4. Nothing compares two documents
+in a repo and nothing ever will, so the answer is fewer places for a claim to live.
 
 Design decisions and open questions are in `docs/decisions.md`.
