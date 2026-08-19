@@ -508,13 +508,14 @@ So I rebuilt the 12 shard corpus from its recorded command and ran it through a 
 answer exactly. Nothing in the code between those two points moved the dedupe operator. It
 is sensitive to the corpus and not to the code.
 
-The rest of it does not close, and the reason is worth stating. **The 14 shard corpus cannot
-be rebuilt, because I never wrote down the command that produced it.** A corpus built to its
-described settings gives 58,167 rows against 58,158 and an independent late count of 38
-against 124, so it is a similar corpus and not that corpus. The dedupe refused 2 on it. The figure "98 against 124" therefore
-rests on an input nobody can reconstruct, including a later run of this project, and
-it is marked as such above rather than repeated as though it were checkable. Every
-command that builds a corpus quoted here is now in this README.
+The rest of it does not close, and the reason is worth stating. **The 14 shard corpus
+cannot be rebuilt, because I never wrote down the command that produced it.** A corpus
+built to its described settings gives 58,167 rows against 58,158 and an independent late
+count of 38 against 124, so it is a similar corpus and not that corpus. The dedupe
+refused 2 on it. The figure "98 against 124" therefore rests on an input nobody can
+reconstruct, including a later run of this project, and it is marked as such above
+rather than repeated as though it were checkable. Every command that builds a corpus
+quoted here is now in this README.
 
 ## The warehouse sink
 
@@ -771,10 +772,11 @@ python scripts/reproduction_report.py --chart docs/reproduction.png
   The claim it supports is narrow and it is not checkable. The 12 shard corpus is
   rebuildable and reproduces exactly.
 - **`scripts/watermark_sweep.py` raised AttributeError for a while and nothing noticed.**
-  I added `--sink` to the job and never updated the hand built namespace in that script,
-  so every run of the thing that produces the watermark table died on the first arm. Fixed, and `tests/test_structural.py` now compares every hand built
-  namespace against the attributes `stream.job.run` really reads. Nothing in the suite
-  executes a script, so that class of break needs a check that reads source.
+I added `--sink` to the job and never updated the hand built namespace in that script,
+so every run of the thing that produces the watermark table died on the first arm.
+Fixed, and `tests/test_structural.py` now compares every hand built namespace against
+the attributes `stream.job.run` really reads. Nothing in the suite executes a script, so
+that class of break needs a check that reads source.
 - **The lag budget adds three p50 values as if they composed.** The median of a sum is
   not the sum of medians. At these magnitudes the conclusion does not depend on it,
   since one term is 99.94 percent of the total, and on a corpus where the terms were
@@ -807,15 +809,16 @@ python scripts/reproduction_report.py --chart docs/reproduction.png
 
 Four things, in the order I would spend the time.
 
-**Guard the checkpoint against the warehouse, and accept the schema change.** I measured a
-job that keeps its checkpoint, loses its target table and exits clean with zero rows. Then I
-left it unfixed, for a specific reason. The guard is a last committed batch id written
-into the warehouse inside the same transaction as the MERGE and compared at startup. That
-adds a column to `sessions`, which is the table every figure in this file rests on, and
-publishing a number measured against a schema that no longer exists is worse than shipping
-the gap named. **I stand by the reasoning and I think the decision was wrong.** On a real system the schema moves and the
-numbers get retaken, and a silent zero row success is the worst failure mode in this
-repo. If there were an eighth day it would be spent here.
+**Guard the checkpoint against the warehouse, and accept the schema change.** I measured
+a job that keeps its checkpoint, loses its target table and exits clean with zero rows.
+Then I left it unfixed, for a specific reason. The guard is a last committed batch id
+written into the warehouse inside the same transaction as the MERGE and compared at
+startup. That adds a column to `sessions`, which is the table every figure in this file
+rests on, and publishing a number measured against a schema that no longer exists is
+worse than shipping the gap named. **I stand by the reasoning and I think the decision
+was wrong.** On a real system the schema moves and the numbers get retaken, and a silent
+zero row success is the worst failure mode in this repo. If there were an eighth day it
+would be spent here.
 
 **Point the pipeline at a live producer.** Every latency figure here is the delay the
 design imposes, computed from the pipeline's own output. There is no wall clock event
