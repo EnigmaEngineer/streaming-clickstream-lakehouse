@@ -2,7 +2,7 @@
 
 `stream.job.run` takes an argparse namespace and reads attributes off it. Two scripts
 build that namespace by hand with `SimpleNamespace`, so adding an option to the job is
-a change that silently breaks every hand built caller. That happened on day 4, when
+a change that silently breaks every hand built caller. That happened here, when
 `--sink` arrived and `scripts/watermark_sweep.py` was left raising AttributeError on
 every run for a day. Nothing caught it because nothing in the suite executes a script.
 

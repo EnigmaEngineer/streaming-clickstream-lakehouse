@@ -46,7 +46,7 @@ def one(path: str, work: Path, watermark: str, gap: str, files_per_trigger: int)
         topic=None,
         out=str(out),
         checkpoint=str(ckpt),
-        # sink and duckdb arrived on day 4 and this namespace did not get them, so
+        # sink and duckdb arrived later and this namespace did not get them, so
         # every run of this script since raised AttributeError inside stream.job.run.
         # Nothing caught it because nothing runs scripts/. tests/test_structural.py
         # now compares this call against the attributes run() really reads.
@@ -59,7 +59,7 @@ def one(path: str, work: Path, watermark: str, gap: str, files_per_trigger: int)
         available_now=True,
         seconds=0.0,
         log_level="ERROR",
-        # crash_batch and crash_point arrived on day 6. Same shape as the day 4
+        # crash_batch and crash_point arrived later. Same shape as the
         # omission above, and this time tests/test_structural.py failed on the first
         # run after run() started reading them.
         crash_batch=None,

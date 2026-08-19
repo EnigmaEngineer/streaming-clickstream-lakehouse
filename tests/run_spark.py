@@ -27,7 +27,7 @@ MODULES = [
 def collect(mod) -> list[str]:
     """Check functions defined in this module, not ones it imported.
 
-    Found on 2026-08-16 the moment warehouse/merge.py grew a function called
+    Found the moment warehouse/merge.py grew a function called
     `check_batch`. The runner picked it up off the import, called it with no
     arguments, and reported a failure in a test file that did not have one. The
     reverse case is worse and was sitting right behind it. An imported check that
@@ -51,7 +51,7 @@ def run() -> int:
     passed, failed = 0, []
     for name in MODULES:
         # A module that will not import is a failure to report, not a crash. On
-        # 2026-08-15 a syntax error in one test file killed the runner after another
+        # a syntax error in one test file killed the runner after another
         # module's checks had already passed, and the exit was a traceback rather
         # than a count. The same shape took down a job on another repo here.
         try:

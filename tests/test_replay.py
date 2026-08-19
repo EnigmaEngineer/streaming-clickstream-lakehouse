@@ -5,7 +5,7 @@ so it is tested here rather than in the no-install suite. The fake sink below re
 what it was handed, which is the only way to tell "crashed before the merge" apart
 from "crashed after it" without a warehouse.
 
-The 2026-08-02 fixture rule applies. A fixture with one batch in it cannot test a rule
+The fixture rule applies here too. A fixture with one batch in it cannot test a rule
 about which batch to die on, so every check below runs at least four.
 """
 

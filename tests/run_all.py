@@ -1,7 +1,7 @@
 """Test runner.
 
 Plain functions named check_*, no pytest. The reason is in `docs/decisions.md`: on
-another repo in this program two pytest-style files entered a project whose runner
+on another project of mine two pytest-style files entered a repo whose runner
 loops over scripts, and one of them exited 0 having executed zero assertions.
 
 A module that defines no checks is a failure here, not a pass.
@@ -29,7 +29,7 @@ MODULES = [
 def collect(mod) -> list[str]:
     """Check functions defined in this module, not ones it imported.
 
-    Found on 2026-08-16 the moment warehouse/merge.py grew a function called
+    Found the moment warehouse/merge.py grew a function called
     `check_batch`. The runner picked it up off the import, called it with no
     arguments, and reported a failure in a test file that did not have one. The
     reverse case is worse and was sitting right behind it. An imported check that
@@ -53,7 +53,7 @@ def run() -> int:
     passed, failed = 0, []
     for name in MODULES:
         # An import error is a reportable failure, not a reason to abandon the run
-        # and print a traceback where a count should be. Added 2026-08-15 after the
+        # and print a traceback where a count should be. Added after the
         # Spark runner did exactly that.
         try:
             mod = importlib.import_module(name)

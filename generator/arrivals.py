@@ -1,6 +1,6 @@
 """Who is on the site right now.
 
-The first build of day 2 sampled a user from the whole population on every event. That
+The first build of this sampled a user from the whole population on every event. That
 looked reasonable and it was wrong. With 2000 users and 500 events per second, every
 user gets an event every four seconds forever, so no inactivity gap ever reaches
 thirty minutes and no session ever ends. The measurement said it plainly: 2000 users,

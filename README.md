@@ -49,8 +49,8 @@ the file source, which needs no broker at all.
                                                                             recovered vs true
 ```
 
-Three things in that picture are worth naming, because each of them turned out to be
-different from what day 1 assumed.
+Three things in that picture are worth naming, because I got all three wrong at the
+start.
 
 **The key buys ordering at the broker and nothing for Spark.** `Exchange
 hashpartitioning(user_id, 8)` sits in front of the session window aggregation, so the
@@ -63,13 +63,14 @@ Delete the table and keep the checkpoint and the job exits clean with zero rows.
 **`session_hint` is the ground truth and the pipeline never reads it.** Scoring joins
 the raw events back onto the emitted windows, so what gets graded is the real output.
 
-The reason written here until day 4 was that session windows need the key to keep state
-local. That was wrong and it had sat unchecked since day 1. `explain` answers it in one
-command and nobody had run it. The partitioner section below is the measurement.
+This file used to say session windows need the key to keep state local. That is wrong, and
+I had been repeating it since the first commit without checking. `explain` answers it in one
+command. I never ran it. The partitioner section below is the measurement.
 
 ## The generator
 
-`generator/` builds the traffic. Every knob exists because day 3 has to survive it.
+`generator/` builds the traffic. Every knob is here because the streaming job has to
+survive it.
 
 | Module | What it owns |
 |---|---|
@@ -101,19 +102,19 @@ command and nobody had run it. The partitioner section below is the measurement.
 | `sql.py` | Every statement in both dialects, and which of them have ever run. |
 | `merge.py` | Stage, merge, clear. The only function that writes to `sessions`. |
 
-## Measured on 2026-08-19, re-run on day 7
+## The generator, measured
 
-Every figure here comes out of `scripts/measure_generator.py` on this machine on that
-date. Re-run it and they move. Sandbox speed varies by about 1.8x between days, so
-treat the ratios as the durable part.
+Every figure here comes out of `scripts/measure_generator.py` on this machine. Re-run it and
+they move. This box varies by about 1.8x session to session, so treat the ratios as the
+durable part and the milliseconds as disposable.
 
-Day 7 re-ran the whole script against the day 2 figures it replaced. Everything seeded
-came back to the digit. The counted quantities reproduced exactly, and the two things
-that moved are both timings.
+I re-ran the whole script against the figures it was replacing. Everything seeded came back
+to the digit. The counted quantities reproduced exactly and the only things that moved were
+timings.
 
-**Throughput ceiling.** 39,193 events per wall second with the pacer switched off,
-median of five passes after a discarded warmup, range 39,128 to 39,298. Day 2 measured
-37,226 on the same code. That is 5.3 percent of machine and nothing else.
+**Throughput ceiling.** 39,193 events per wall second with the pacer switched off, median of
+five passes after a discarded warmup, range 39,128 to 39,298. An earlier session gave 37,226
+on the same code. That is 5.3 percent of machine and nothing else.
 
 **Rate control.** Ask for 50, 500 or 5,000 events per second and the run comes back
 1.09, 0.21 and 0.13 percent high. The error shrinks as the rate rises, because the
@@ -138,14 +139,14 @@ generator reports that as `admissions_deflected` rather than hiding it.
 2,494 seconds. 12.3 percent of late events are more than a minute behind.
 
 This block used to end with a sentence saying a one minute watermark would therefore
-drop about 1 percent of the stream. Day 3 measured it and dropped zero. The sentence
-was a prediction written in the voice of a measurement and it is corrected below.
+drop about 1 percent of the stream. I measured it. It dropped zero. That sentence was a
+prediction wearing a measurement's clothes and the correction is below.
 
 **Session shape.** 900,000 events, 105,730 sessions, 2,000 users. Median 5 events per
 session and p95 26. A single event is 11.3 percent of them and 32.7 percent
 contain a checkout.
 
-## The thing day 2 got wrong
+## The generator bug that would have destroyed the ground truth
 
 The first build of the generator sampled a user from the whole population on every
 event. It looked fine. Then the measurement said 2,000 users and 2,000 sessions, a
@@ -160,7 +161,7 @@ session per user.
 releases them, so a session ends because the visit ended and not because the clock ran
 out.
 
-## The number day 3 has to live with
+## The number the streaming job has to live with
 
 The pipeline recovers sessions from a thirty minute inactivity gap. The generator knows
 where the real boundary was. They disagree, and the disagreement is not small.
@@ -184,7 +185,7 @@ those people come back in seconds however many other users exist.
 
 So a session count off this pipeline is a lower bound, and how much of a lower bound
 depends on the shape of the user distribution rather than on anything the streaming job
-does. Day 3 measures it against `session_hint` rather than assuming it away.
+does. The job is scored against `session_hint` rather than assumed correct.
 
 ## The streaming job
 
@@ -223,8 +224,8 @@ them is a retry whose event time moved, and that shape is not in the data.
 The obvious expectation is that a two minute watermark against a lateness tail
 reaching seventeen minutes throws away a lot of events. It throws away none.
 
-Measured on 2026-08-15 over 58,182 events in 12 shards, one shard per trigger, on
-Spark 3.5.6 and Java 11. `dropped` is `numRowsDroppedByWatermark` read off the query
+Measured over 58,182 events in 12 shards, one shard per trigger, on Spark 3.5.6 and
+Java 11. `dropped` is `numRowsDroppedByWatermark` read off the query
 progress rather than counted by hand.
 
 | watermark | session gap | dropped by session window | dropped by dedupe | sessions out | events covered |
@@ -248,7 +249,8 @@ event. That is the watermark changing the answer without dropping anything.
 
 A plain count of rows sitting below the watermark at the start of their batch says
 98 rows at a 10 second watermark and 25 at 2 minutes. That calculation is in the
-day 3 audit and it runs in Python with no Spark in it. Spark dropped 2.
+`scripts/watermark_sweep.py` and it runs in plain Python with no Spark in it. Spark
+dropped 2.
 
 The reason is the session gap. A session window ends one gap after its last event,
 so a late event is only refused when even the new session it would open has already
@@ -263,17 +265,16 @@ The practical version. On a session windowed pipeline the watermark is buying ou
 latency and state size, not late data. The gap is doing the admission. Tuning the
 watermark to protect against data loss is tuning the wrong number.
 
-**That claim is about the session window operator and day 4 found a hole beside it.**
+**That claim is about the session window operator, and there is a hole beside it.**
 The dedupe operator is reported as its own column above for exactly this reason. On
-day 3 it refused 0 rows at a 2 minute watermark against an independent Python count
-of 25 sitting below it. On day 4, on a different corpus, it refused 98 against an
-independent count of 124. The session window operator dropped 0 on both days, so the
-finding above is untouched. Day 5 chased the difference and half of it closed. See
-"The dedupe drop count was a data difference" below for where that landed and for the
-half that can never close.
+this corpus it refused 0 rows at a 2 minute watermark against an independent Python count
+of 25 sitting below it. On a different corpus it refused 98 against an independent count of
+124. The session window operator dropped 0 on both, so the finding above is untouched. I
+chased the difference and half of it closed. See "The dedupe drop count was a data
+difference" below for where that landed and for the half that never can.
 
-Day 7 re-ran the whole of this table's corpus on a later tree again. 58,182 input
-rows, 14 batches, and both operators dropped 0. Same as day 3 and same as day 5.
+I have now rerun this table's corpus three times on three different trees. 58,182 input
+rows and 14 batches every time, with both operators dropping 0.
 
 ### Scoring against ground truth
 
@@ -287,7 +288,8 @@ graded is the pipeline's actual output and not a variant carrying a truth column
 | seed 11 | 2,035 s | 3,721 | 3,723 | 0 | 1 |
 | seed 7, fat tail | 80,211 s | 3,691 | 3,770 | 142 | 885 |
 
-Row one is the day 2 prediction reproduced against the real Spark job, exactly, on
+Row one is the generator's own prediction reproduced against the real Spark job, exactly,
+on
 7,022 true sessions against 3,252 recovered. Boundary miss rate 0.5369.
 
 Rows two and three are the check on whether that exactness means anything. It is
@@ -305,13 +307,13 @@ rather than a pattern. Row two, on a different seed, returns 3,723.
 
 ## The partitioner, finally measured against a broker
 
-`generator/population.py` has claimed since day 1 that `crc32_partition` reproduces
-librdkafka's default partitioner. Nothing had checked it. Day 4 stood a real broker
-up and checked it, and checked the Java claim beside it.
+`generator/population.py` had claimed from the first commit that `crc32_partition`
+reproduces librdkafka's default partitioner. Nobody had checked it. So I stood a real broker
+up and checked it, and checked the Java claim sitting next to it.
 
 Kafka 3.7.1 in KRaft mode on one node with six partitions. librdkafka 2.15.0. The
 keys are 200 distinct user ids from `generator.population.Population` and the same
-200 go through both clients into two topics. Measured 2026-08-16 by
+200 go through both clients into two topics. Measured by
 `scripts/probe_partitioner.py`.
 
 | producer | model | keys | disagreements |
@@ -337,12 +339,12 @@ partitioner written here. A port measured against another port measures nothing.
 
 ## Session features
 
-Day 4's four features, computed inside the session window in `stream/features.py`.
+Four features, computed inside the session window in `stream/features.py`.
 
 **`duration_s` is the span of real events, not the span of the window.** A session
 window ends one gap after its last event, so `session_end - session_start` carries
 the entire gap on every row. Measured over the 2,366 recovered sessions of the
-2026-08-16 corpus, median `duration_s` is 10.1 s against a median `window_span_s` of
+14 shard corpus, median `duration_s` is 10.1 s against a median `window_span_s` of
 1,810.1 s. That is a factor of 133.7 at the median. The mean difference is exactly
 1,800.0 s, which is the gap. Both columns ship so the inflation is visible in the
 data rather than only in a comment.
@@ -357,9 +359,9 @@ per open session.
 
 ### What the boundary miss rate does to the features
 
-Day 3 measured the thirty minute gap losing boundaries and left it as a number about
-sessionization. This is the same number seen from the dashboard end. Measured
-2026-08-16 over 58,157 events. 6,664 true sessions against 2,366 recovered, so the
+The section above measures the thirty minute gap losing boundaries and leaves it as a
+number about sessionization. This is that same number seen from the dashboard end. Measured
+over 58,157 events. 6,664 true sessions against 2,366 recovered, so the
 boundary miss rate is 0.645.
 
 | feature | per true visit | per recovered session | ratio |
@@ -381,9 +383,9 @@ a two visit fixture whose answer is known by hand.
 
 ### The same table on a second corpus, and one ratio does not behave
 
-Day 7 ran the identical scorer over the day 3 corpus, which is a lower boundary miss
-rate on a slower arrival rate. 58,182 events over 7,022 true sessions. 3,252 recovered
-and a miss rate of 0.5369 against 0.645 above.
+I ran the identical scorer over the 12 shard corpus, which has a lower boundary miss rate
+on a slower arrival rate. 58,182 events over 7,022 true sessions. 3,252 recovered and a miss
+rate of 0.5369 against 0.645 above.
 
 | feature | ratio at miss 0.645 | ratio at miss 0.5369 |
 |---|---|---|
@@ -398,15 +400,15 @@ visits should do. **Duration goes the other way.** Fewer merges and a bigger err
 
 The reason is that duration is the only feature whose inflation is not a count. Merging
 two visits adds one inter visit gap to the duration, and how long that gap is depends
-on the arrival rate rather than on how often merges happen. The day 3 corpus runs at 8
-events per second against several hundred, so its visitors are away for far longer and
-each merge costs far more seconds.
+on the arrival rate rather than on how often merges happen. The 12 shard corpus runs at 8
+events per second against several hundred, so its visitors are away for far longer and each
+merge costs far more seconds.
 
 So a reader cannot take the miss rate as a correction factor for the features. It ranks
 four of them and it is the wrong variable for the fifth. That was not obvious from one
-corpus and the one corpus version of this table was written on day 4.
+corpus, and the single corpus version of this table sat here for days before I checked.
 
-## The latency floor, measured on 2026-08-17
+## The latency floor
 
 The goal line at the top of this project's brief asks for under a minute of end to end
 lag. The design the same brief specifies cannot reach it, and the gap is not close.
@@ -479,8 +481,8 @@ and scores the output against `session_hint`. Watermark held at 2 minutes throug
 | 15 minutes | 1,020 | 3,888 | 0.4465 | 0.0001 | 0 |
 | 30 minutes | 1,920 | 3,252 | 0.5369 | 0.0000 | 0 |
 
-The 30 minute row reproduces day 3's published figures exactly, on a different day and
-a later tree. 3,252 sessions, miss rate 0.5369, no splits.
+The 30 minute row reproduces the figures published further up exactly, on a later tree in
+a separate session. 3,252 sessions, miss rate 0.5369, no splits.
 
 **The thirty minute default is worse on latency and worse on merges.** It is 10.7x
 slower than a one minute gap and loses 4.9x more boundaries. The single thing it buys
@@ -498,19 +500,18 @@ because its p50 really is zero and a log axis has nowhere to put that.
 
 ### The dedupe drop count was a data difference, not a code change
 
-Day 4 opened `ot-039`. `dropDuplicatesWithinWatermark` refused 0 rows on day 3 and 98
-on day 4, and turning 0 into 98 needed an explanation that neither day had.
+`dropDuplicatesWithinWatermark` refused 0 rows on the 12 shard corpus
+and 98 on the 14 shard one, and turning 0 into 98 needed an explanation I did not have.
 
-Day 3's corpus was rebuilt from its recorded command and run through today's tree.
-It read 58,182 input rows, matching day 3 to the row. The dedupe refused **0**, which
-is day 3's answer exactly. So nothing in the day 4 or day 5 diff moved the dedupe
-operator. It is sensitive to the corpus and not to the code.
+So I rebuilt the 12 shard corpus from its recorded command and ran it through a later tree.
+58,182 input rows, matching to the row. The dedupe refused **0**, which is the original
+answer exactly. Nothing in the code between those two points moved the dedupe operator. It
+is sensitive to the corpus and not to the code.
 
-The rest of that thread does not close, and the reason is worth stating. **Day 4's
-corpus cannot be rebuilt, because the command that produced it was never written
-down.** A corpus built to day 4's described settings gives 58,167 rows against day 4's
-58,158 and an independent late count of 38 against 124, so it is a similar corpus and
-not that corpus. The dedupe refused 2 on it. The figure "98 against 124" therefore
+The rest of it does not close, and the reason is worth stating. **The 14 shard corpus cannot
+be rebuilt, because I never wrote down the command that produced it.** A corpus built to its
+described settings gives 58,167 rows against 58,158 and an independent late count of 38
+against 124, so it is a similar corpus and not that corpus. The dedupe refused 2 on it. The figure "98 against 124" therefore
 rests on an input nobody can reconstruct, including a later run of this project, and
 it is marked as such above rather than repeated as though it were checkable. Every
 command that builds a corpus quoted here is now in this README.
@@ -523,8 +524,8 @@ shape a Snowflake load takes with a staged file in front of it, so the DuckDB pa
 a rehearsal of the real one rather than a different design.
 
 **Snowflake has never been contacted.** `warehouse/sql.py` holds every statement in
-both dialects and says which have run. DuckDB 1.5.5, all of them, on 2026-08-16.
-Snowflake, none, ever.
+both dialects and says which have run. DuckDB 1.5.5, all of them. Snowflake, none,
+ever.
 
 Idempotency is a claim, so it is measured. The job ran the whole corpus into a fresh
 database, then ran it again from a fresh checkpoint into the same database.
@@ -547,11 +548,11 @@ before a replay finished it.
 **A batch holding two rows for one key is refused before the MERGE is sent.**
 DuckDB refuses it too, which `tests/test_merge.py` checks rather than assumes, so the
 guard is a better error message and not the only thing standing between a replay and
-an arbitrary winner. No batch in the 2026-08-16 run contained one.
+an arbitrary winner. No batch in any run here has contained one.
 
-## Failure and replay, measured 2026-08-18
+## Failure and replay
 
-Day 6 is the day the exactly-once claim gets attacked. `stream/job.py` takes
+This is where the exactly-once claim gets attacked. `stream/job.py` takes
 `--crash-batch` and `--crash-point`, which kill the job at a chosen batch either side
 of the MERGE. `scripts/replay_matrix.py` drives five arms and compares each final
 table against the clean one. `stream/recovery.py` reads the checkpoint and says which
@@ -593,11 +594,11 @@ checks that they still agree.
 That asymmetry is the useful part. The checkpoint is a progress optimisation that
 carries a correctness liability, and the usual framing has it the other way round.
 
-## Kafka, end to end, 2026-08-18
+## Kafka, end to end
 
-`generator/sinks.py` had a `KafkaSink` from day 2 that had never been run, and
-`build_sink` raised `NotImplementedError` rather than returning it. Day 6 ran it
-against a real broker, so the guard came off.
+`generator/sinks.py` carried a `KafkaSink` for a long time that had never once been run, and
+`build_sink` raised `NotImplementedError` rather than returning it. It has now run against a
+real broker, so the guard came off.
 
 Broker: Kafka 3.7.1 in KRaft mode, 6 partitions, listeners pinned to `127.0.0.1`.
 
@@ -643,7 +644,7 @@ paths the commands in this README write to, named one at a time rather than by
 wildcard. It keeps the tarball, because re-downloading 120 MB to run the tests again is
 a bad default.
 
-Verified on 2026-08-19, one full lifecycle inside a single shell call.
+Verified end to end, one full lifecycle inside a single shell call.
 
 ```
 bootstrap-local.sh                          ready in 20.4 s, topic created
@@ -656,30 +657,17 @@ teardown.sh --purge                         broker stopped, state removed
 The offset sum is the check worth having. Anything else compares the producer against
 itself.
 
-**`scripts/setup.sh` is the Docker path and it has never run.** It was the first
-command in this README for six days and it needs a daemon the machine every number came
-off does not have. It is kept for a laptop that has one. That is also how MinIO stayed
-in the compose file for seven days without anything ever connecting to it. See
-`docs/decisions.md`.
+**`scripts/setup.sh` is the Docker path and it has never run.** It was the first command
+in this README for a long time and it needs a daemon this machine does not have. It stays
+for a laptop that has one. That is also how MinIO sat in the compose file the whole time
+without anything ever connecting to it. See `docs/decisions.md`.
 
-## Status
+## Benchmarks
 
-Day 7 of 7. Code complete on the blueprint.
-
-- [x] Day 1: compose stack, event schema, decisions doc
-- [x] Day 2: producer with rate control. Late events, duplicates and a visit model
-- [x] Day 3: streaming job. parse / dedupe / watermark / sessionize
-- [x] Day 4: feature extraction, staged MERGE sink, partitioner probe
-- [x] Day 5: latency and throughput metrics, the gap tradeoff sweep
-- [x] Day 6: failure testing and replay. Duplicate verification and Kafka end to end
-- [x] Day 7: benchmarks and architecture, teardown, plus the drift audit
-
-## Benchmarks, all re-measured on 2026-08-19
-
-Every row below was produced on day 7 by the command beside it, on one machine, in one
-session. Nothing here is carried forward from an earlier day's write up. Two figures in
-this repo have already been found sitting in prose after the thing that produced them
-had changed, so the day 7 pass re-ran everything rather than trusting the text.
+Every row below was produced by the command beside it, on one machine, in one session.
+Nothing here is carried forward from an older write up. Twice now I have found a figure
+sitting in this file after the thing that produced it had changed, so I re-ran all of them
+rather than trusting the text.
 
 Corpus for the streaming rows, rebuilt from the command in "The streaming job" above:
 58,182 rows in 12 shards plus one flush sentinel. 7,022 true sessions.
@@ -719,27 +707,27 @@ in this file are the durable part and the milliseconds are dated.
 **The counts in the quick start block at the top of this file were wrong for four
 days.** They said 63, 9 and 33 checks. The real numbers are 115, 9 and 51. Nothing in
 the repo produced that line and nothing could contradict it, which is the same defect
-this project found in a README figure on day 5.
+I hit in this same file with the cost ratio further up.
 
 `scripts/reproduction_report.py` holds all 25 pairs and prints the verdict per figure.
 The rule is in `stream/repro.py`, which has 8 checks over it, and it is one rule with
 two branches. **A counted quantity reproduces exactly or it is broken, with no
 tolerance band.** A timing that moves is expected. The band is the thing worth arguing
 about, and this project has a specific reason for setting it at zero. A figure on
-another repo in this program was wrong by 0.24 percent, was published four times, and
+another project of mine was wrong by 0.24 percent, was published four times, and
 any tolerance loose enough to be comfortable would have waved it through.
 
 ```bash
 python scripts/reproduction_report.py --chart docs/reproduction.png
 ```
 
-![day 7 reproduction check](docs/reproduction.png)
+![reproduction check](docs/reproduction.png)
 
 ## Limitations, today
 
-- **The Kafka path has run exactly once. One broker and one corpus.** Day 6 produced
-  5,446 events through `KafkaSink` and read them back through `--source kafka`, and
-  the checkpoint offsets sum to the produced count. Everything measured about
+- **The Kafka path has run twice. One broker and one corpus each time.** 5,446 events
+  through `KafkaSink`, read back through `--source kafka`, with the checkpoint offsets
+  summing to the produced count. Everything measured about
   watermarks, gaps and replay still came off the file source, because a broker will
   not fit alongside a five arm matrix in this sandbox. One clean end to end run is not
   the same as the numbers having been taken there.
@@ -751,7 +739,7 @@ python scripts/reproduction_report.py --chart docs/reproduction.png
   repo detects that the checkpoint and the warehouse have drifted apart. The obvious
   guard is to record the last committed batch id in the warehouse inside the same
   transaction as the merge, and compare the two at startup. That was not built today,
-  because a batch id column changes the table every number since day 4 rests on.
+  because a batch id column changes the table every number in this file rests on.
 - **The warehouse is DuckDB and the Snowflake statements have never run.** They are
   written beside the ones that did and labelled, in `warehouse/sql.py`. Snowflake also
   accepts a PRIMARY KEY declaration without enforcing it, so on that side the
@@ -775,17 +763,16 @@ python scripts/reproduction_report.py --chart docs/reproduction.png
 - **No wall clock latency has been measured and none can be here.** Every lag figure
   above is the delay the design imposes, computed from the pipeline's own output. A
   real number needs a live producer and a query running against the warehouse at the
-  same time. Day 6 had a live producer and did not build it, because the corpus is
-  still a replay of historical timestamps and the answer would be the age of the
-  events rather than the latency of the system.
-- **The day 4 dedupe figure rests on a corpus that cannot be rebuilt.** 98 refusals
-  against an independent count of 124 came off an input whose generator command was
-  never recorded. The claim it supports is narrow and it is not checkable. Day 3's
-  corpus is rebuildable and reproduces exactly.
-- **`scripts/watermark_sweep.py` raised AttributeError for a day and nothing noticed.**
-  Day 4 added `--sink` to the job and the hand built namespace in that script was not
-  updated, so every run of the script that produces the watermark table died on the
-  first arm. Fixed, and `tests/test_structural.py` now compares every hand built
+  same time. I had a live producer and did not build it, because the corpus is still a
+  replay of historical timestamps and the answer would be the age of the events rather
+  than the latency of the system.
+- **One dedupe figure rests on a corpus I cannot rebuild.** 98 refusals against an
+  independent count of 124 came off an input whose generator command I never wrote down.
+  The claim it supports is narrow and it is not checkable. The 12 shard corpus is
+  rebuildable and reproduces exactly.
+- **`scripts/watermark_sweep.py` raised AttributeError for a while and nothing noticed.**
+  I added `--sink` to the job and never updated the hand built namespace in that script,
+  so every run of the thing that produces the watermark table died on the first arm. Fixed, and `tests/test_structural.py` now compares every hand built
   namespace against the attributes `stream.job.run` really reads. Nothing in the suite
   executes a script, so that class of break needs a check that reads source.
 - **The lag budget adds three p50 values as if they composed.** The median of a sum is
@@ -810,7 +797,7 @@ python scripts/reproduction_report.py --chart docs/reproduction.png
   of the five and it is the wrong variable for duration, whose inflation is set by the
   inter visit gap rather than by how often merges happen. Two corpora were enough to
   show that and one was not.
-- **MinIO and `.env.example` were removed on day 7, not fixed.** Nothing in this repo
+- **MinIO and `.env.example` were removed rather than fixed.** Nothing in this repo
   reads an environment variable and nothing ever spoke S3, so both were describing a
   system that did not exist. The alternative was to build the S3 staging step the
   compose file implied, and inventing an untested code path on the last day to justify
@@ -820,22 +807,21 @@ python scripts/reproduction_report.py --chart docs/reproduction.png
 
 Four things, in the order I would spend the time.
 
-**Guard the checkpoint against the warehouse, and accept the schema change.** Day 6
-measured a job that keeps its checkpoint, loses its target table and exits clean with
-zero rows. That was left unfixed on day 6 for a specific reason. The guard is a last
-committed batch id written into the warehouse inside the same transaction as the MERGE
-and compared at startup, and that adds a column to `sessions`, which is the table every
-figure since day 4 rests on. Publishing a number measured against a schema that no
-longer exists is worse than shipping the gap named. **Day 7 keeps that decision and I
-think it is the wrong long term answer.** On a real system the schema moves and the
+**Guard the checkpoint against the warehouse, and accept the schema change.** I measured a
+job that keeps its checkpoint, loses its target table and exits clean with zero rows. Then I
+left it unfixed, for a specific reason. The guard is a last committed batch id written
+into the warehouse inside the same transaction as the MERGE and compared at startup. That
+adds a column to `sessions`, which is the table every figure in this file rests on, and
+publishing a number measured against a schema that no longer exists is worse than shipping
+the gap named. **I stand by the reasoning and I think the decision was wrong.** On a real system the schema moves and the
 numbers get retaken, and a silent zero row success is the worst failure mode in this
 repo. If there were an eighth day it would be spent here.
 
 **Point the pipeline at a live producer.** Every latency figure here is the delay the
 design imposes, computed from the pipeline's own output. There is no wall clock event
 to query number and there cannot be one while the corpus is a replay of historical
-timestamps, because `now() - event_ts` would be the age of the files. Day 6 had a live
-broker and did not build it. That is the one blueprint promise this repo answers with
+timestamps, because `now() - event_ts` would be the age of the files. I had a live broker
+in front of me and did not build it. That is the one goal this repo answers with
 arithmetic instead of a measurement, and the README says so rather than dressing the
 arithmetic up.
 
@@ -846,8 +832,8 @@ more than half. The interesting build is two gaps at once, a fast one for anythi
 needs latency and a slow one for the counts, rather than one number argued about.
 
 **Check the second document.** The README was rewritten every day for a week and
-`docs/decisions.md` was not, so on day 7 it still said session windows need broker
-partition locality. The README retracted that on day 4. Nothing compares two documents
-in a repo and nothing ever will, so the answer is fewer places for a claim to live.
+`docs/decisions.md` was not, so it was still claiming session windows need broker
+partition locality long after this file had retracted it. Nothing compares two documents in
+a repo and nothing ever will, so the answer is fewer places for a claim to live.
 
 Design decisions and open questions are in `docs/decisions.md`.

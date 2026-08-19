@@ -1,13 +1,13 @@
-"""The day 7 pass. Every figure this README published, re-measured, side by side.
+"""Every figure this README published, re-measured, side by side.
 
     python scripts/reproduction_report.py                     # json
     python scripts/reproduction_report.py --chart docs/reproduction.png
 
 The table below is a record rather than a computation. `published` is what the README
-said before day 7 and the day it was written. `measured` is what the command in
-`source` returned on 2026-08-19, on the corpus rebuilt from the command in the README's
+said before this pass ran. `measured` is what the command in
+`source` returned when I re-ran it, on the corpus rebuilt from the command in the README's
 "The streaming job" section. Every one was run in this session and the raw outputs are
-in the day 7 audit.
+in my notes.
 
 Two things this script is deliberately not. It does not run the pipeline, because a
 report that re-derives its own inputs would report agreement with itself. And it does
@@ -82,7 +82,7 @@ def chart(rep: dict, path: str) -> None:
     ax.legend(handles=handles, loc="lower right", fontsize=8, framealpha=0.9)
     ax.set_yticks(range(len(rows)))
     ax.set_yticklabels(names, fontsize=8)
-    ax.set_xlabel("day 7 measurement divided by the figure the README published")
+    ax.set_xlabel("re-measured value divided by the figure the README published")
     ax.set_title(
         f"{rep['counted']} counted quantities, all exactly 1.000. "
         f"{rep['moved']} timings moved.",

@@ -1,7 +1,7 @@
 """A fixture. Never imported and never run.
 
-This is the real day 4 defect, reduced. The namespace carries everything except `sink`,
-which is exactly the shape scripts/watermark_sweep.py was in from 2026-08-16 until it
+This is a real defect from this repo, reduced. The namespace carries everything except `sink`,
+which is exactly the shape scripts/watermark_sweep.py sat in for a while before it
 was fixed. AttributeError at run time and nothing in the suite noticed.
 """
 

@@ -10,11 +10,11 @@ from generator.population import (
     partition_load,
 )
 
-# Measured against a real broker on 2026-08-16. Kafka 3.7.1 in KRaft mode with six
+# Measured against a real broker. Kafka 3.7.1 in KRaft mode with six
 # partitions and librdkafka 2.15.0. The columns are the key and the partition the
 # librdkafka producer put it on and the partition the Java console producer chose for
 # the same key. These came off the broker. Nothing in this repo computed them. Full
-# map in the day 4 audit and scripts/probe_partitioner.py regenerates them.
+# map in my notes and scripts/probe_partitioner.py regenerates them.
 MEASURED = [
     ("u_004ae5", 2, 1),
     ("u_03983c", 3, 2),
@@ -98,7 +98,7 @@ def check_partition_load_conserves_events():
 
 
 def check_both_models_reproduce_what_the_broker_did():
-    """The whole point of the day 4 probe, frozen so it cannot quietly rot.
+    """The whole point of the partitioner probe, frozen so it cannot quietly rot.
 
     Both halves matter. crc32 has to match the librdkafka column and murmur2 has to
     match the Java column. Checking only the model this repo uses would leave the
@@ -114,7 +114,7 @@ def check_the_two_models_really_do_disagree_on_these_keys():
 
     Every measured pair here has the two clients on different partitions, so a
     murmur2_partition that had accidentally been written as crc32 would fail. That is
-    the control, and this program has been bitten enough times by a green check that
+    the control, and I have been bitten enough times by a green check that
     could not have gone red.
     """
     for key, via_librdkafka, via_java in MEASURED:
@@ -127,7 +127,7 @@ def check_disagreements_are_counted_not_rated():
     Six keys and not two. A two key fixture cannot tell "zero disagreements" apart
     from "fewer than half disagree", because one out of two fails both readings. A
     mutant that turned the flag into a majority vote survived that fixture on
-    2026-08-16 and this is what killed it.
+    a real broker, and this is what killed it.
     """
     observed = {k: i % 6 for i, k in enumerate("abcdef")}
     perfect = partition_disagreements(observed, 6, lambda k, p: observed[k])
@@ -139,7 +139,7 @@ def check_disagreements_are_counted_not_rated():
 
 
 def check_a_comparison_over_nothing_is_refused():
-    """A checker that passes on zero inputs is the defect this program has now found
+    """A checker that passes on zero inputs is a defect I have now found
     in three of its own tools. This one raises instead."""
     for bad in ({}, None):
         try:

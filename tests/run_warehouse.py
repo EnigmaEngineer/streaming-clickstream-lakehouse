@@ -21,7 +21,7 @@ MODULES = ["tests.test_merge"]
 def collect(mod) -> list[str]:
     """Check functions defined in this module, not ones it imported.
 
-    Found on 2026-08-16 the moment warehouse/merge.py grew a function called
+    Found the moment warehouse/merge.py grew a function called
     `check_batch`. The runner picked it up off the import, called it with no
     arguments, and reported a failure in a test file that did not have one. The
     reverse case is worse and was sitting right behind it. An imported check that

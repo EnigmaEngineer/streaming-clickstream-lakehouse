@@ -38,7 +38,7 @@ def check_duplicates_carry_the_same_event_id_and_a_later_ingest_time():
 def check_a_copy_due_after_the_run_ends_is_counted_and_not_flushed():
     # The first build flushed the queue at the end and stamped every copy with the
     # final clock reading, so a hundred of them landed inside one millisecond. That
-    # is a pattern day 3 would have to explain and the generator invented it.
+    # is a pattern the streaming job would have to explain and the generator invented it.
     cfg, sink, stats = _run(dup_rate=0.3)
     assert stats.duplicates_pending > 0, "nothing was left pending, the check is idle"
     stamps = [v["ingest_ts"] for _, v in sink.records]
@@ -69,7 +69,7 @@ def check_lateness_is_off_entirely_at_a_rate_of_zero():
 
 
 def check_the_key_is_the_user_id():
-    # Session locality on day 3 rests entirely on this.
+    # Session locality in the streaming job rests entirely on this.
     cfg, sink, stats = _run()
     assert all(k == v["user_id"] for k, v in sink.records)
 
@@ -99,7 +99,7 @@ def check_the_run_is_reproducible_at_a_fixed_seed():
 
 
 def check_the_kafka_sink_refuses_without_a_broker_and_a_topic():
-    # Until day 6 this asserted NotImplementedError, because the sink had never run
+    # This used to assert NotImplementedError, because the sink had never run
     # against a broker and a path nobody has executed is worse than an absent one. It
     # has now run, so what is left to check is that it will not quietly produce into
     # the default topic on a caller who forgot to name one.

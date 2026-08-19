@@ -3,7 +3,7 @@
 Append mode emits a session window only once the watermark has passed its end. A
 bounded run over a fixed set of files stops when the files run out, so the last
 watermark reading is whatever the final batch produced and every session still
-inside its thirty minute gap never closes. On the first full run of day 3 that left
+inside its thirty minute gap never closes. On the first full run that left
 2117 sessions emitted and 34481 events sitting in state with nothing to push them
 out.
 

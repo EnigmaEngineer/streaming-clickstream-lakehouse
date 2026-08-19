@@ -1,8 +1,8 @@
 """Print the lag budget. Formatting only.
 
-The arithmetic is in stream/lag.py and the measurements are in stream/latency.py, both
-of which have tests. This file reads paths and prints JSON. ot-037 on the program side
-is about figures whose producing code nothing tests, and the split is the answer to it.
+The arithmetic is in stream/lag.py and the measurements are in stream/latency.py, both of
+which have tests. This file reads paths and prints JSON. A published figure whose producing
+code nothing tests is a figure nobody can contradict, and this split is how I avoid that.
 
     python -m scripts.latency_report --events /tmp/events --sessions /tmp/sessions \\
         --progress /tmp/progress.json

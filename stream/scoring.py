@@ -10,9 +10,9 @@ events back onto the sessions the pipeline emitted rather than asking the pipeli
 to carry a truth column, because a pipeline with a measurement flag on it is not the
 pipeline being measured.
 
-This lives in the library rather than in scripts/ on purpose. Every number it
-produces ends up published, and ot-037 on the program side is about figures whose
-producing code nothing tests. tests/test_scoring.py runs against it.
+This lives in the library rather than in scripts/ on purpose. Every number it produces
+ends up published, and a published figure whose producing code nothing tests is a figure
+nobody can contradict. tests/test_scoring.py runs against it.
 """
 
 from pyspark.sql import DataFrame, functions as F
@@ -122,7 +122,7 @@ FEATURES = ["converted", "bounce", "event_count", "page_depth", "duration_s"]
 def feature_bias(events: DataFrame, sessions: DataFrame) -> dict:
     """How far the recovered features sit from the real ones.
 
-    Day 3 measured the boundary miss rate and left it as a number about
+    The sessionization scorer measures the boundary miss rate and leaves it as a number about
     sessionization. This is what that number does to the columns anyone would
     actually put on a dashboard. A merged session inherits the union of two visits,
     so a conversion anywhere in the pair marks the whole thing and a bounce in either

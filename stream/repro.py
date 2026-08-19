@@ -1,6 +1,6 @@
 """Does a figure this repo published still come out of the code that produced it.
 
-Day 7 re-ran every measurement in the README rather than trusting the prose, because
+I re-ran every measurement in the README rather than trusting the prose, because
 this project has twice found a number sitting in a sentence after the thing that
 produced it had moved. The classification below is the rule that pass used.
 
@@ -39,8 +39,8 @@ class Figure:
 
 def ratio(fig: Figure) -> float:
     if fig.published == 0:
-        # A published zero has no ratio. Day 3 published zero drops on two operators and
-        # day 7 measured zero again, which is a reproduction and not a division.
+        # A published zero has no ratio. This README publishes zero drops on two
+        # operators and the re-run gave zero again, which is a reproduction not a division.
         return 1.0 if fig.measured == 0 else float("inf")
     return fig.measured / fig.published
 
@@ -50,7 +50,7 @@ def classify(fig: Figure) -> str:
 
     A counted quantity that moves at all is BROKEN, not MOVED. There is no tolerance
     band here on purpose. The seeds are fixed, so a difference of one row means a
-    difference in the code, and the interesting cases in this program have all been
+    difference in the code, and the interesting cases I have hit have all been
     small. 254,346 against 254,952 on another repo was 0.24 percent and it was a real
     defect that had been published four times.
     """
@@ -62,10 +62,10 @@ def classify(fig: Figure) -> str:
 
 
 def report(figures: list[Figure]) -> dict:
-    """Summarise a day 7 style pass.
+    """Summarise a reproduction pass.
 
     Refuses an empty list. A checker that reports clean having looked at nothing is a
-    defect this program has now found in three separate tools, and the answer each time
+    defect I have now found in three separate tools of my own, and the answer each time
     was to make "nothing to check" a finding rather than a pass.
     """
     if not figures:

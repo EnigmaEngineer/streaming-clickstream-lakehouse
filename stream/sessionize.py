@@ -1,6 +1,6 @@
 """Parse and watermark and dedupe and session windows.
 
-This is the whole of day 3. Four steps and three of them have a trap in them.
+The whole pipeline. Four steps and three of them have a trap in them.
 
 The order is fixed and it is not arbitrary. The watermark has to be set before the
 dedupe, because the dedupe uses it to decide when it may forget an event_id. And it
@@ -17,10 +17,10 @@ from stream.schema import EVENT_SCHEMA, cast_times
 # truth rather than the truth. docs/event-schema.md explains why they differ.
 DEFAULT_GAP = "30 minutes"
 
-# How late an event may be before the pipeline stops waiting for it. Day 2 measured
+# How late an event may be before the pipeline stops waiting for it. The generator measured
 # the generator's injected lateness at a median of 12.07s and a p99 of 297s. The
 # longest was 2494s. So this number looks like a decision about which end of that
-# tail to pay for, and day 3 measured that it is not. See the README. It is a
+# tail to pay for, and it is measured not to be. See the README. It is a
 # default rather than a recommendation. scripts/watermark_sweep.py makes it a choice.
 DEFAULT_WATERMARK = "2 minutes"
 
@@ -98,9 +98,8 @@ def session_windows(df: DataFrame, gap: str = DEFAULT_GAP) -> DataFrame:
 def build_sessions(raw: DataFrame, gap: str = DEFAULT_GAP, delay: str = DEFAULT_WATERMARK) -> DataFrame:
     """The one door.
 
-    Everything that turns raw payloads into sessions goes through here. ot-026 on the
-    program side is about a rule that each caller has to remember to apply, and the
-    answer that worked on the last project was to leave callers no second route in.
-    The job, the tests and the scorer all call this.
+    Everything that turns raw payloads into sessions goes through here. A rule each
+    caller has to remember to apply is a rule that is optional, so the answer is to leave
+    callers no second route in. The job, the tests and the scorer all call this.
     """
     return session_windows(dedupe(watermark(parse(raw), delay)), gap)

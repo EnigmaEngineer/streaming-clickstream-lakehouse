@@ -1,6 +1,6 @@
 """The producer loop.
 
-Rate control, late-event injection and duplicate emission. Everything the day 3
+Rate control, late-event injection and duplicate emission. Everything the streaming
 streaming job has to survive is created here on purpose and with a knob on it.
 
 Run:
@@ -126,7 +126,7 @@ def run(cfg: Config, sink, clock=None) -> Stats:
         parts = sessions.step(user_id, event_time, rng, new_visit=first_of_visit)
         if parts["new_session"] and not parts["gap_rule_new_session"]:
             # A visit the gap rule cannot see, because the same user came back inside
-            # thirty minutes. Day 3 will merge these two into one session and this is
+            # thirty minutes. The job merges these two into one session and this is
             # the count of how often that is going to happen.
             stats.boundaries_gap_rule_misses += 1
         event = build_event(user_id, parts, clock.now(), timedelta(seconds=lateness))
@@ -143,7 +143,7 @@ def run(cfg: Config, sink, clock=None) -> Stats:
 
     # Whatever is still queued is NOT emitted. The first version of this flushed the
     # queue at the end, which stamped every one of them with the final clock reading
-    # and produced a burst of copies inside one millisecond. Day 3 would have read
+    # and produced a burst of copies inside one millisecond. The job would have read
     # that as a dedupe spike caused by the pipeline. The count is reported instead,
     # so a short run is explainable rather than quietly wrong. The share left behind
     # is roughly dup_delay_s over seconds, so it goes away on a long run.
@@ -186,8 +186,8 @@ def build_sink(name: str, path: str | None, brokers: str = "", topic: str = ""):
             raise ValueError("--out is required with --sink file")
         return JsonlSink(open(path, "w", encoding="utf-8"))
     if name == "kafka":
-        # This raised NotImplementedError from day 2 to day 5, on the rule that a path
-        # nobody has run is worse than an absent one. Day 6 ran it against a 3.7.1
+        # This raised NotImplementedError for a long time, on the rule that a path
+        # nobody has run is worse than an absent one. It has now run against a 3.7.1
         # KRaft broker, so the guard came off and the README says which broker.
         from generator.sinks import KafkaSink  # noqa: PLC0415
 
@@ -206,7 +206,7 @@ def main(argv=None) -> int:
     p.add_argument("--users", type=int, default=5000)
     p.add_argument("--alpha", type=float, default=1.0)
     p.add_argument("--late-rate", type=float, default=0.05)
-    # Day 3 needs to push the lateness tail past the thirty minute session gap. Below
+    # The watermark work needs the lateness tail pushed past the thirty minute gap. Below
     # the gap, an online rule that tracks the newest event time and an offline session
     # window agree exactly, because no late event can ever bridge a gap it is shorter
     # than. Above it they must diverge, and that is a claim worth being able to run.

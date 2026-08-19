@@ -1,7 +1,7 @@
 """Everything the README quotes about the generator comes from here.
 
 Run it and the numbers move. That is the point. A figure written into prose by hand
-cannot be contradicted by a later change, and this program has been bitten by that
+cannot be contradicted by a later change, and I have been bitten by that
 twice on another repo.
 
     python scripts/measure_generator.py
@@ -105,11 +105,11 @@ def lateness_profile(late_rate: float = 0.08) -> dict:
 
 
 def session_shape(pool: int = 150) -> dict:
-    """What the session model actually produces. Day 3 scores against this.
+    """What the session model actually produces. The sessionization is scored against this.
 
     `gap_rule_misses` is the number that matters. The pipeline recovers sessions from
     a thirty minute inactivity gap. The generator knows the real boundary, because a
-    visit either ended or it did not. Every miss is a pair of real sessions day 3 will
+    visit either ended or it did not. Every miss is a pair of real sessions the job will
     report as one, and no amount of Spark tuning recovers them.
     """
     cfg = Config(

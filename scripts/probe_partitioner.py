@@ -1,6 +1,6 @@
 """Produce keyed records to a real broker and report where they landed.
 
-This exists because `generator.population.crc32_partition` has claimed since day 1
+This exists because `generator.population.crc32_partition` has claimed from the start
 that it reproduces librdkafka's default partitioner, and nothing had ever checked it.
 The README limitation said so plainly. This is the check.
 

@@ -1,6 +1,6 @@
 """User population with a heavy tail.
 
-`docs/decisions.md` has claimed since day 1 that the generator has a heavy-tail user
+`docs/decisions.md` has claimed from the start that the generator has a heavy-tail user
 distribution, so that hot partitions can be observed rather than argued about. It did
 not. This is that claim being made true.
 
@@ -126,7 +126,7 @@ def partition_disagreements(observed: dict[str, int], partitions: int, predictor
     """Check a partitioner model against what a broker really did.
 
     `observed` maps a key to the partition a record carrying that key landed on.
-    Until 2026-08-16 nothing had ever supplied that map, so `crc32_partition` was a
+    For a long time nothing ever supplied that map, so `crc32_partition` was a
     claim about librdkafka read off its source rather than measured.
 
     The verdict is the disagreement count and not the agreement count. A function
@@ -139,7 +139,7 @@ def partition_disagreements(observed: dict[str, int], partitions: int, predictor
     if partitions < 1:
         raise ValueError(f"partitions must be at least 1, got {partitions}")
     if not observed:
-        # A comparison over nothing is the failure this program keeps finding. Say
+        # A comparison over nothing is a failure mode I keep running into. Say
         # so rather than returning a clean-looking zero.
         raise ValueError("nothing to compare, observed is empty")
 

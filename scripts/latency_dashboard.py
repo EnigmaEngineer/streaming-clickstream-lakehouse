@@ -1,9 +1,9 @@
-"""Draw the two charts day 5 is about. Reads files, draws, writes a PNG.
+"""Draw the two charts the lag budget is about. Reads files, draws, writes a PNG.
 
 No arithmetic here. Both inputs are produced by scripts/latency_report.py and
 scripts/latency_sweep.py, whose numbers come out of stream/lag.py and
 stream/latency.py, and those have tests. A chart script that computed anything would
-be a figure with no test behind it, which is ot-037 on the program side.
+be a figure with no test behind it.
 
     python -m scripts.latency_dashboard --report /tmp/lat.json \\
         --sweep /tmp/sweep.jsonl --out docs/latency-budget.png
@@ -47,7 +47,7 @@ def draw(report: dict, sweep: list, out: str) -> str:
     ax1.set_title("Where the lag goes, at a 30 minute gap")
     goal = report["budget"]["goal_s"]
     ax1.axvline(goal, color="#2c3e50", linestyle="--", linewidth=1)
-    ax1.text(goal * 1.1, 2.35, f"blueprint goal, {goal:.0f}s", fontsize=8, color="#2c3e50")
+    ax1.text(goal * 1.1, 2.35, f"goal, {goal:.0f}s", fontsize=8, color="#2c3e50")
     biggest = max(drawn)
     for bar, k in zip(bars, keys):
         value = terms[k]

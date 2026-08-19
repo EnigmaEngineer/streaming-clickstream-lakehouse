@@ -1,9 +1,8 @@
 """Print the session scorecard. Formatting only.
 
-The arithmetic is in stream/scoring.py, which has tests. This file reads two paths
-and prints JSON. That split is deliberate and it is the ot-037 rule on the program
-side, which is that a script producing a published figure should not be the only
-place that figure's logic lives.
+The arithmetic is in stream/scoring.py, which has tests. This file reads two paths and
+prints JSON. That split is deliberate. A script that produces a published figure should
+never be the only place that figure's logic lives.
 
     python -m scripts.score_sessions --events /tmp/events --sessions /tmp/sessions
 """

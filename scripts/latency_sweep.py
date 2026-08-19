@@ -3,7 +3,7 @@
 The gap is the only knob that moves the emission floor, and it moves the boundary miss
 rate at the same time and in the opposite direction. A short gap emits sooner and
 splits real visits. A long gap waits and merges them. That is the tradeoff this
-project is actually about and day 3 measured only one half of it.
+project is actually about and the watermark table measured only one half of it.
 
 Resumable on purpose. Each arm is a fresh SparkSession over 58 thousand events and
 takes about thirty seconds, and the shell this runs in kills a call at roughly 178
@@ -64,7 +64,7 @@ def one(path: str, work: Path, gap: str, watermark: str, files_per_trigger: int)
         available_now=True,
         seconds=0.0,
         log_level="ERROR",
-        # crash_batch and crash_point arrived on day 6. Same shape as the day 4
+        # crash_batch and crash_point arrived later. Same shape as the
         # omission above, and this time tests/test_structural.py failed on the first
         # run after run() started reading them.
         crash_batch=None,

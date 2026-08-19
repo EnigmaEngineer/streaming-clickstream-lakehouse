@@ -1,7 +1,7 @@
 # Event schema
 
 One topic, `clickstream.events`, one event type. Keeping it to a single topic for now.
-Splitting by event type is a day-6 problem if partition skew shows up.
+Splitting by event type is a problem for later, if partition skew shows up.
 
 Key: `user_id`. That guarantees all events for a user land on the same partition, which
 Spark needs for session windows to work without a shuffle on every micro-batch.
@@ -12,7 +12,7 @@ Spark needs for session windows to work without a shuffle on every micro-batch.
 |---|---|---|
 | `event_id` | uuid string | Dedupe key. Generator intentionally emits some twice. |
 | `user_id` | string | `u_` + 6 hex. Partition key. |
-| `session_hint` | string | Generator's own session id. **Not** used by the pipeline. It exists so I can score my sessionization against ground truth. Since day 2 it increments when a visit starts, not when a thirty minute gap opens. Those two are different and the difference is measured in the README. |
+| `session_hint` | string | Generator's own session id. **Not** used by the pipeline. It exists so I can score my sessionization against ground truth. It increments when a visit starts, not when a thirty minute gap opens. Those two are different and the difference is measured in the README. |
 | `event_type` | enum | `page_view`, `click`, `scroll`, `add_to_cart`, `checkout` |
 | `page` | string | Path, e.g. `/product/8821` |
 | `referrer` | string \| null | Null on the first event of a visit |
@@ -51,14 +51,14 @@ will use.
 
 It is **not** what `session_hint` does. The generator ends a session when the visit
 ends, which is the truth of the matter, and the gap rule is one way of guessing at it
-from the outside. Day 2 measured how good a guess. On a heavy tailed population it
+from the outside. I measured how good a guess. On a heavy tailed population it
 misses about half the boundaries and the misses are concentrated on the busiest users.
-The day-1 version of this paragraph said the two were the same thing. They are not, and
+The first version of this paragraph said the two were the same thing. They are not, and
 if they were then `session_hint` would be worthless as ground truth, because it would
 only ever confirm what the pipeline already decided.
 
 Edge case I have not decided yet: a session that spans a watermark boundary. Spark will
 emit the window when the watermark passes it, but a very late event belonging to that
 session arrives after the state is dropped. Options are to widen the watermark (more
-memory, more latency) or accept the loss and count it. Day 6 problem, noted in
+memory, more latency) or accept the loss and count it. A problem for later, noted in
 `docs/decisions.md`.

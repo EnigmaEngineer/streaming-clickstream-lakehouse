@@ -16,7 +16,7 @@ is and what it cost.
 The functions refuse rather than return empty when there is nothing to read. A
 checkpoint directory that does not exist and a checkpoint with no batches in it are
 different from a clean run, and a reader that answers "nothing uncommitted" to both
-is the shape of check this program keeps catching.
+is the shape of check I keep having to catch.
 """
 
 import json

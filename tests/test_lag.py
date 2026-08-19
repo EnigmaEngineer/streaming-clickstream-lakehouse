@@ -1,6 +1,6 @@
 """Checks for the lag arithmetic.
 
-No Spark here on purpose. The headline number of day 5 is a sum of two parsed
+No Spark here on purpose. The headline lag figure is a sum of two parsed
 durations, and a clone with nothing installed should be able to falsify it.
 
 Fixtures build the collision in rather than hoping for it, per the 08-02 lesson. A
@@ -149,7 +149,7 @@ def check_a_single_batch_run_reports_no_rest_quantiles():
 
 def check_the_budget_is_dominated_by_the_emission_delay():
     """The day's finding, pinned. At the repo defaults the structural term is over 99
-    percent of the total and the goal in the blueprint is unreachable."""
+    percent of the total and the stated goal is unreachable."""
     got = lag_budget("30 minutes", "2 minutes", ingest_p50_s=0.0, processing_p50_ms=200.0)
     assert got["terms"]["emission_delay_s"] == 1920.0, got
     assert got["share"]["emission_delay_s"] > 0.999, got

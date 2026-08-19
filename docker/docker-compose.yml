@@ -2,7 +2,7 @@
 # sandbox every number came off has no Docker daemon. scripts/bootstrap-local.sh is the
 # path that has run. See the README.
 #
-# MinIO was in this file from day 1 to day 7 and is gone. Nothing in the repo ever spoke
+# MinIO sat in this file for the life of the project and is gone. Nothing in the repo ever spoke
 # S3. The sink writes Parquet to a local path and loads it into DuckDB, so the container
 # pulled an image, held a volume and served nobody.
 services:

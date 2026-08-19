@@ -136,7 +136,7 @@ def rich_events(rows):
 
 
 def feature_sessions(rows):
-    """Recovered sessions carrying the day 4 feature columns.
+    """Recovered sessions carrying the feature columns.
 
     Each row holds a user id and a start and an end. Then event_count and page_depth
     and duration_s and converted and bounce.
@@ -164,7 +164,7 @@ def check_truth_features_ignore_planted_duplicates():
 
 
 def check_a_merged_session_pulls_conversion_up_and_bounce_down():
-    """The day 4 finding, on a fixture where the right answer is known by hand.
+    """The feature bias finding, on a fixture where the right answer is known by hand.
 
     Two real visits. One is a single page bounce that never converts. The other
     converts. Merged into one recovered session they read as one converting,

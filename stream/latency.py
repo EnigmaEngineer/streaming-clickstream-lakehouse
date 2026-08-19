@@ -2,12 +2,11 @@
 
 The arithmetic is in stream/lag.py and it is tested without Spark. This file holds
 the two terms that have to be measured over the corpus and over the pipeline's real
-output. Split that way because the headline figure of the day is arithmetic and a
-clone should be able to check it with nothing installed.
+output. Split that way because the headline figure is arithmetic and a clone should be
+able to check it with nothing installed.
 
-Every number here ends up published, so it lives in the library and not in scripts/.
-That is ot-037 on the program side. A figure whose producing code nothing tests is a
-figure nobody can contradict.
+Every number here ends up published, so it lives in the library rather than in scripts/.
+A figure whose producing code nothing tests is a figure nobody can contradict.
 """
 
 from pyspark.sql import DataFrame, functions as F
@@ -66,9 +65,8 @@ def emission_lag(events: DataFrame, sessions: DataFrame, watermark: str) -> dict
     """Per event, how long after its own event time its session became emittable.
 
     The join comes from `stream.scoring.attach_sessions` rather than being written
-    again here. There is one definition of which session contains an event and it
-    already exists. Two of them would drift, and ot-026 on the program side is exactly
-    about a rule each caller reimplements.
+    again here. There is one definition of which session contains an event and it already
+    exists. Two of them would drift apart the moment one changed.
 
     `session_end` is already one gap past the session's last event, so adding the
     watermark gives the earliest instant append mode may emit. Subtracting each

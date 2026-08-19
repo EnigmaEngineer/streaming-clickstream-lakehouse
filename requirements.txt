@@ -1,8 +1,8 @@
-# Checked with ast over every .py file in the repo on 2026-08-17. Four third party
+# Checked with ast over every .py file in the repo. Four third party
 # imports exist. Anything not listed here is the standard library. The count is dated
-# because it was wrong on 2026-08-15 within a day of being written.
+# because it was wrong once within a day of being written.
 #
-# ot-029 on the program side is about declaring packages nobody imports. Day 1
+# Declaring packages nobody imports is its own kind of lie. The first cut
 # declared pyspark, python-dotenv and duckdb with not one line importing any of
 # them. pyspark is back because stream/ imports it now. The other two are not.
 
@@ -13,25 +13,25 @@
 # stream/, scripts/score_sessions.py and tests/run_spark.py.
 # 3.5 or newer is a hard floor, not a preference. dropDuplicatesWithinWatermark
 # landed in 3.5.0 and stream/sessionize.py has no fallback for its absence.
-# 4.x is NOT declared because it wants Java 17 and the day 3 numbers were measured
+# 4.x is NOT declared because it wants Java 17 and every number here was measured
 # on Java 11. Pinning a version the figures never ran on is worse than a range.
 pyspark>=3.5,<4.0
 
 # warehouse/ and the --sink duckdb path in stream/job.py, plus tests/run_warehouse.py.
-# Pinned rather than ranged because MERGE INTO is recent in duckdb and the day 4
+# Pinned rather than ranged because MERGE INTO is recent in duckdb and the
 # idempotency figures were measured on this exact version.
 duckdb==1.5.5
 
 # generator/sinks.py KafkaSink and scripts/probe_partitioner.py. The probe DID run
-# against a real broker on 2026-08-16 and the version below is the one it ran on.
+# against a real broker and the version below is the one it ran on.
 # KafkaSink itself is still unrun, so this file no longer says the whole path is
 # untested. Half of it is.
 confluent-kafka==2.15.0
 
-# scripts/latency_dashboard.py only. It was MISSING for the whole of day 5 until an
+# scripts/latency_dashboard.py only. It was MISSING for a long time until an
 # ast pass caught it, and the reason it was invisible is that the sandbox already has
 # matplotlib and no test draws anything. That is the identical defect, in the identical
-# package, that this program found on another repo on 2026-08-08. A dependency the
+# package, that turned up on another repo of mine. A dependency the
 # build environment happens to satisfy is a dependency nothing will notice is absent.
-# Pinned to the version the day 5 chart was actually drawn on.
+# Pinned to the version the chart was actually drawn on.
 matplotlib==3.10.9

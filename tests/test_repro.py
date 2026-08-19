@@ -1,9 +1,9 @@
-"""Checks for the day 7 reproduction rule.
+"""Checks for the reproduction rule.
 
 The point of the module under test is that a count and a timing get different
 treatment. So every fixture here builds a case where the two rules disagree. A
-fixture where both rules give the same verdict cannot tell whether the split exists,
-which is the 08-02 lesson from another repo in this program.
+fixture where both rules give the same verdict cannot tell whether the split exists.
+I have been caught by that one before.
 """
 
 from stream.repro import (
@@ -45,7 +45,7 @@ def check_there_is_no_tolerance_band_hiding_in_the_count_rule():
 
 
 def check_a_published_zero_reproduces_rather_than_dividing():
-    """Day 3 published zero rows dropped by both operators and day 7 measured zero
+    """The README publishes zero rows dropped by both operators and the re-run gave zero
     again. That is the most common shape in this repo and it has no ratio."""
     z = _fig(0, 0, COUNTED, name="dropped_by_watermark")
     assert ratio(z) == 1.0
@@ -66,7 +66,7 @@ def check_an_unknown_kind_raises_rather_than_defaulting_to_the_lenient_rule():
 
 
 def check_report_refuses_an_empty_list():
-    """Three tools in this program have reported a clean pass having checked nothing.
+    """Three tools I have written reported a clean pass having checked nothing.
     Making the empty case a finding is the fix that worked each time."""
     try:
         report([])
@@ -82,8 +82,8 @@ def check_report_counts_each_verdict_and_only_a_broken_count_makes_it_dirty():
 
     The split is deliberately three to one rather than one to one. A fixture with the
     same number of each cannot tell `kind == COUNTED` from `kind == TIMING`, and a
-    mutant that swapped them survived this check until 2026-08-19. That number is the
-    headline of the chart in the README, so the swap would have been published.
+    mutant that swapped them survived this check for a while. That number is the headline
+    of the chart in the README, so the swap would have been published.
     """
     figs = [
         _fig(58182, 58182, COUNTED, "input_rows"),

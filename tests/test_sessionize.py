@@ -3,12 +3,12 @@
 These need pyspark and they are slow, so they live behind tests/run_spark.py rather
 than in the standard library suite. Nothing here is skipped when pyspark is missing.
 It fails, loudly, because a suite that reports a pass on zero executed checks is the
-failure mode this program keeps finding in its own tooling.
+failure mode I keep finding in my own tooling.
 
 Every fixture below is built so the rule under test has something to choose between.
 A session fixture with one event per user cannot test a boundary rule, and a dedupe
 fixture with no repeat cannot test a dedupe. That lesson cost three surviving mutants
-on another repo in this program.
+on another project of mine.
 """
 
 import json
@@ -238,7 +238,7 @@ def check_session_output_carries_no_truth_column():
     the scorer would be grading a pipeline that had been handed the answer.
 
     The assertion is on the exact set rather than on the absence of one name, and it
-    earned that on 2026-08-16. The first draft of day 4's feature list carried a
+    earned that. The first draft of the feature list carried a
     `distinct_hints` column, which is a count of the truth column and would have
     walked straight past an `assert "session_hint" not in cols`. This is also why the
     set is written out rather than derived from SESSION_COLUMNS. Deriving it would

@@ -1,11 +1,11 @@
 """Per-user session state.
 
-Day 1 drew every event type independently, so a checkout could arrive from a user who
+The first version drew every event type independently, so a checkout could arrive from a user who
 had never seen a product page. Sessionization scored against that is scored against
 noise. This walks each user through a small funnel instead, and it keeps the previous
 page so `referrer` chains within a visit.
 
-`session_hint` is ground truth for scoring day 3's sessionization. The pipeline never
+`session_hint` is ground truth for scoring the sessionization. The pipeline never
 reads it.
 """
 
@@ -60,7 +60,7 @@ class SessionModel:
 
         The truth about where a session begins is `new_visit`, which the visit pool
         owns. The thirty minute gap rule is computed alongside it and reported as
-        `gap_rule_new_session`, because that is what day 3 will recover with and the
+        `gap_rule_new_session`, because that is what the job recovers with and the
         two disagreeing is a number worth having before the streaming job exists.
         """
         st = self.states.setdefault(user_id, UserState())

@@ -1,6 +1,6 @@
 """Where the end to end lag goes, as arithmetic.
 
-The blueprint asks for a dashboard showing p50 and p95 event to query lag. Taking
+The brief asks for a dashboard showing p50 and p95 event to query lag. Taking
 that literally on this repo would produce a lie, and it is worth saying why before
 any number appears.
 
@@ -158,7 +158,7 @@ def batch_latency(progress) -> dict:
 def lag_budget(gap: str, watermark: str, ingest_p50_s: float, processing_p50_ms: float) -> dict:
     """The three terms side by side, with each one's share of the total.
 
-    This is the whole point of day 5. The two terms anyone would tune are the two that
+    This is the whole point of the lag budget. The two terms anyone would tune are the two that
     do not matter, and the term nobody thinks of as latency is the entire number.
 
     `processing_p50_ms` is a per batch figure and it is charged here as if one batch
@@ -175,7 +175,7 @@ def lag_budget(gap: str, watermark: str, ingest_p50_s: float, processing_p50_ms:
         "total_s": round(total, 4),
         "goal_s": 60.0,
         "meets_goal": total <= 60.0,
-        # The blueprint's own goal line is "under a minute of end to end lag". The
+        # The goal line for this project is "under a minute of end to end lag". The
         # ratio is how far the design it also specifies is from that, and it is a
         # fact about the two lines contradicting each other rather than about Spark.
         "over_goal_by": round(total / 60.0, 2),

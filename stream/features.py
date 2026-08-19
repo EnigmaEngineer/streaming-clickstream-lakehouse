@@ -1,6 +1,6 @@
 """Per-session features. Duration and page depth and bounce and conversion.
 
-Day 4's blueprint line. Day 3 deliberately aggregated only a count so that its
+The sessionization step deliberately aggregates only a count so that its
 numbers did not rest on work that had not been done yet.
 
 The aggregations live here rather than inside `session_windows` because the window

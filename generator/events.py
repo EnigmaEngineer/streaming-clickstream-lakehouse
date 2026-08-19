@@ -1,8 +1,8 @@
 """Event model.
 
-Day 1 had a `make_event` that drew event type, page, device and country independently
+The first `make_event` drew event type, page, device and country independently
 on every call. That is gone. A checkout arriving from a user who had never opened a
-product page made the sessionization score on day 3 meaningless, because there was no
+product page made the sessionization score meaningless, because there was no
 structure in the stream to recover. `session.SessionModel` owns those fields now and
 this module only assembles the record.
 """

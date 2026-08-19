@@ -5,10 +5,10 @@ into `sessions`, the stage is emptied. That is the same shape a Snowflake load t
 with a staged Parquet file in front of it, so the DuckDB path here is a rehearsal of
 the real one rather than a different design.
 
-ONE DOOR. `apply_batch` is the only function that writes to `sessions`. ot-026 on the
-program side is about a rule each caller has to remember, and the answer that has
-worked twice now is to leave callers no second route in. `stream/sessionize.py` does
-the same for the read side.
+ONE DOOR. `apply_batch` is the only function that writes to `sessions`. A rule every
+caller has to remember to apply is a rule that is optional, and the answer that has worked
+for me twice now is to leave callers no second route in. `stream/sessionize.py` does the
+same for the read side.
 """
 
 from datetime import datetime, timezone

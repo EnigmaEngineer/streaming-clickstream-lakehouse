@@ -4,7 +4,7 @@ No Spark here. The fixtures are checkpoint shaped directories built by hand, whi
 the only way to test the crash case without crashing something. A real checkpoint from
 today's run is compared against these in tests/test_replay.py, which needs pyspark.
 
-The fixture rule from 2026-08-02 applies hard in this file. A checkpoint with one
+The fixture rule applies hard in this file. A checkpoint with one
 batch in it cannot test any rule about choosing between batches, so every fixture
 below has at least three.
 """

@@ -1,7 +1,7 @@
 """Checks for the source reading detector, and then the real repo run through it.
 
 Half of these point the detector at fixtures with a known answer. The other half point
-it at this repo, which is the part that would have caught the day 4 breakage.
+it at this repo, which is the part that would have caught the real breakage.
 
 The fixture half exists because a check that reads code cannot be tested from inside
 itself. That was the 08-10 lesson on the previous project, where the equivalent
@@ -90,7 +90,7 @@ def check_a_file_with_no_namespace_calls_raises_rather_than_passing():
 
 
 def check_every_hand_built_namespace_in_this_repo_is_complete():
-    """The real check. This is the one that would have caught day 4.
+    """The real check. This is the one that would have caught the real breakage.
 
     scripts/watermark_sweep.py built a namespace without `sink` from the moment the
     job grew that option, so every run of it raised AttributeError for a day while the

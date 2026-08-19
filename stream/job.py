@@ -130,7 +130,7 @@ def duckdb_sink(db_path: str, batches: list):
 class InjectedCrash(RuntimeError):
     """Deliberate. Raised by `crash_at` and by nothing else.
 
-    Day 6 needs the job to die at a point it chooses. Killing the process from
+    The replay matrix needs the job to die at a point it chooses. Killing the process from
     outside works and it cannot say whether the merge for that batch had run, which
     is the only thing the replay question turns on.
     """
@@ -243,7 +243,7 @@ def main(argv=None) -> int:
     if a.summary_json:
         # Separate from --progress-json rather than folded into it. That file is read
         # by scripts.latency_report and it expects a list of batches, so widening it
-        # would break the day 5 table to save one flag.
+        # would break the latency table to save one flag.
         with open(a.summary_json, "w", encoding="utf-8") as fh:
             json.dump({k: v for k, v in summary.items() if k != "raw_progress"}, fh, default=str)
     if a.progress:

@@ -6,7 +6,7 @@ about which one has run. So every statement lives here twice and `DIALECTS` is w
 `tests/test_warehouse.py` walks to check neither side has grown a statement the other
 is missing.
 
-WHAT HAS RUN. Every DuckDB statement below ran on duckdb 1.5.5 on 2026-08-16. Not one
+WHAT HAS RUN. Every DuckDB statement below ran on duckdb 1.5.5. Not one
 Snowflake statement has ever been sent to Snowflake. They are written from the docs
 and they are unverified, which is a different thing from wrong and is not a better
 thing. Treat them as a plan.
