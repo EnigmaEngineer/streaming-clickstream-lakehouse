@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Brings up Kafka and MinIO, waits for Kafka, creates the topic.
+# Brings Kafka up under Docker, waits for it, creates the topic.
+#
+# This needs a Docker daemon and it has never run on the machine every number in this
+# repo came off. Use scripts/bootstrap-local.sh unless you specifically want the
+# container. The MinIO service this used to start is gone. Nothing ever connected to it.
 set -euo pipefail
 
 cd "$(dirname "$0")/../docker"
